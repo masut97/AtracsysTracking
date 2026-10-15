@@ -1031,7 +1031,7 @@ def _svg_multi_plot(
         return top + height - (value - y_min) / (y_max - y_min) * height
 
     parts = [
-        f'<text x="{left:.1f}" y="{top - 30:.1f}" class="panel-title">{html.escape(title)}</text>',
+        f'<text x="{left:.1f}" y="{top - 58:.1f}" class="panel-title">{html.escape(title)}</text>',
         f'<rect x="{left:.1f}" y="{top:.1f}" width="{width:.1f}" height="{height:.1f}" class="plot-bg"/>',
     ]
     for tick in x_ticks:
@@ -1060,7 +1060,8 @@ def _svg_multi_plot(
     frame_class = "frame" if alert_level is None else f"frame alert-{alert_level}"
     parts.append(f'<rect x="{left:.1f}" y="{top:.1f}" width="{width:.1f}" height="{height:.1f}" class="{frame_class}" vector-effect="non-scaling-stroke"/>')
 
-    for label, xs, ys, color in series:
+    # Draw dashed fixture traces last so coincident bone/fixture curves remain visible.
+    for label, xs, ys, color in sorted(series,key=lambda item:item[0].lower().startswith('clamp')):
         points = [
             (index, x, y)
             for index, (x, y) in enumerate(zip(xs, ys))
@@ -1086,7 +1087,13 @@ def _svg_multi_plot(
                 }
         if len(points) > 2500:
             stride = math.ceil(len(points) / 2500)
-            selected = set(range(0, len(points), stride))
+            # Preserve narrow peaks as well as endpoints in the display reduction.
+            selected = set()
+            for start in range(0,len(points),stride):
+                end=min(len(points),start+stride)
+                selected.update((start,end-1,
+                    min(range(start,end),key=lambda i:points[i][2]),
+                    max(range(start,end),key=lambda i:points[i][2])))
             selected.add(len(points) - 1)
             original_to_point = {original_index: point_index for point_index, (original_index, _x, _y) in enumerate(points)}
             for gap_index in gap_after:
@@ -1107,9 +1114,9 @@ def _svg_multi_plot(
                 commands.append(f"{command} {sx(x):.2f} {sy(y):.2f}")
                 previous_index = original_index
             dash = ' stroke-dasharray="10 6"' if label.lower().startswith("clamp") else ""
-            parts.append(f'<path class="data-line" d="{" ".join(commands)}" fill="none" stroke="{color}" stroke-width="1.15" vector-effect="non-scaling-stroke"{dash}/>')
+            parts.append(f'<path class="data-line" d="{" ".join(commands)}" fill="none" stroke="{color}" stroke-width="2" vector-effect="non-scaling-stroke"{dash}/>')
     legend_x = left + 10
-    legend_y = top + 20
+    legend_y = top - 20
     for index, (label, _, _, color) in enumerate(series):
         row = index // 2
         column = index % 2
@@ -1139,259 +1146,51 @@ def render_figure(
     config: dict,
     warnings: Sequence[str],
 ) -> None:
+    from _lib.rom_presentation import write_report
     unit = "°" if mode in ROTATION_MODES else "mm"
-    colors = {
-        "clamp_up": "#0057b8",
-        "clamp_down": "#56b4e9",
-        "vertebra_cranial": "#d55e00",
-        "vertebra_caudal": "#e69f00",
-        "segmental": "#d55e00",
-    }
-    labels = {
-        "clamp_up": f"Upper clamp ({markers['clamp_up']})",
-        "clamp_down": f"Lower clamp ({markers['clamp_down']})",
-        "vertebra_cranial": f"Cranial vertebra ({markers['vertebra_cranial']})",
-        "vertebra_caudal": f"Caudal vertebra ({markers['vertebra_caudal']})",
-    }
-    quality_settings = dict(config.get("quality", {}))
-    camera_quality_bands = [(start, end, finding.title)
-                            for finding in quality_findings for start, end in finding.intervals]
-    first_series = [
-        (labels[name], data.times_s, curves[name], colors[name])
-        for name in ("clamp_up", "vertebra_cranial", "clamp_down", "vertebra_caudal")
-    ]
-    segment_rom = max(curves["segmental"]) - min(curves["segmental"])
-    clamp_rom = max(curves["clamp_segmental"]) - min(curves["clamp_segmental"])
-    ratio = quality_metrics.get("vertebra_to_clamp_ratio")
-    severity_rank = {"warning": 1, "critical": 2}
-    quality = quality_summary(quality_findings)
-    overall_severity = quality["status"]
-    first_alert = max(
-        (
-            finding.severity
-            for finding in quality_findings
-            if finding.code
-            in {"peak_data_gap", "rom_spike", "abrupt_motion", "unresolved_signal_to_noise", "nonmonotonic_time", "incomplete_marker_samples", "registration_error"}
-        ),
-        key=lambda value: severity_rank.get(value, 0),
-        default=None,
-    )
-    comparison_findings = {
-        "clamp_rom_too_small",
-        "vertebra_exceeds_clamp",
-        "incoherent_motion",
-        "borderline_motion_transfer",
-        "excess_motion_transfer",
-        "unresolved_signal_to_noise",
-        "rom_spike",
-        "abrupt_motion",
-        "camera_peak_at_edge",
-        "peak_data_gap",
-        "peak_noise",
-    }
-    comparison_alert = max(
-        (
-            finding.severity
-            for finding in quality_findings
-            if finding.code in comparison_findings
-        ),
-        key=lambda value: severity_rank.get(value, 0),
-        default=None,
-    )
-    zwick_alert = max(
-        (
-            finding.severity
-            for finding in quality_findings
-            if finding.code in {"zwick_peak_at_edge", "duration_mismatch", "load_limit_not_reached", "borderline_load_limit", "invalid_load_time", "invalid_load_data"}
-        ),
-        key=lambda value: severity_rank.get(value, 0),
-        default=None,
-    )
-    first_plot = _svg_multi_plot(
-        first_series,
-        (95.0, 210.0, 500.0, 390.0),
-        "Time [s]",
-        f"Motion [{unit}]",
-        "Individual motions in reference coordinate system 299",
-        alert_level=first_alert,
-        vertical_bands=camera_quality_bands,
-        split_gap_factor=float(quality_settings.get("peak_gap_factor", 1.75)),
-    )
-    ratio_text = "n/a" if ratio is None else f"{ratio * 100:.0f} %"
-    second_plot = _svg_multi_plot(
-        [
-            ("Clamp 301 relative to 302", data.times_s, curves["clamp_segmental"], "#0057b8"),
-            ("Vertebra 311 relative to 314", data.times_s, curves["segmental"], colors["segmental"]),
-        ],
-        (710.0, 210.0, 500.0, 390.0),
-        "Time [s]",
-        f"Segment motion [{unit}]",
-        f"Clamp {clamp_rom:.2f} {unit} / Vertebra {segment_rom:.2f} {unit} ({ratio_text})",
-        alert_level=comparison_alert,
-        vertical_bands=camera_quality_bands,
-        split_gap_factor=float(quality_settings.get("peak_gap_factor", 1.75)),
-    )
+    blue, orange = "#2266ad", "#c45c13"
+    # Mark each interval once per observation type, even when several rules refer to it.
+    bands = {}
+    for finding in quality_findings:
+        label = finding.title.lower()
+        kind = ("marker not recognized" if "marker not recognized" in label else
+                "no recorded camera frame" if "no recorded camera frame" in label else
+                "origin unknown" if "origin unknown" in label else "other signal fault")
+        for start, end in finding.intervals:
+            bands[(start, end, kind)] = (start, end, kind)
+    gap_factor = float(config.get("quality", {}).get("peak_gap_factor", 1.75))
+    def camera_panel(title, items, ylabel):
+        series = [(label, data.times_s, curves[key], color) for label, key, color in items]
+        return title, _svg_multi_plot(series, (85., 110., 750., 345.),
+            "Time [s]", ylabel, title, vertical_bands=tuple(bands.values()), split_gap_factor=gap_factor)
+    panels = [camera_panel("Segment motion · cranial relative to caudal", [
+        (f"Clamps ({markers['clamp_up']}–{markers['clamp_down']})", "clamp_segmental", blue),
+        (f"Vertebrae ({markers['vertebra_cranial']}–{markers['vertebra_caudal']})", "segmental", orange),
+    ], f"Segment motion [{unit}]"),
+    camera_panel("Upper pair · cranial vertebra / upper clamp", [
+        (f"Clamp ({markers['clamp_up']})", "clamp_up", blue),
+        (f"Cranial vertebra ({markers['vertebra_cranial']})", "vertebra_cranial", orange),
+    ], f"Motion in reference [{unit}]"),
+    camera_panel("Lower pair · caudal vertebra / lower clamp", [
+        (f"Clamp ({markers['clamp_down']})", "clamp_down", blue),
+        (f"Caudal vertebra ({markers['vertebra_caudal']})", "vertebra_caudal", orange),
+    ], f"Motion in reference [{unit}]")]
     if zwick is not None and metrics is not None:
-        limits = [float(value) for value in config.get("load_limits", {}).get(mode, [])]
-        third_plot = _svg_multi_plot(
-            [("testXpert", zwick.displacements, zwick.loads, "#d95f02")],
-            (1325.0, 210.0, 500.0, 390.0),
-            f"{zwick.displacement_column} [{unit}]",
-            f"{zwick.load_column} [{zwick.load_unit}]",
-            f"testXpert – ROM {metrics.rom_range:.2f} {unit}",
-            limits,
-            zwick_alert,
-        )
-        zwick_note = f"Source: {zwick.source.name}"
-    else:
-        missing_class = "alert-critical" if zwick_expected else "alert-warning"
-        missing_text = (
-            "No matching .tra file"
-            if zwick_expected
-            else "Retrospective without .tra – Atracsys only"
-        )
-        third_plot = (
-            '<text x="1325" y="180" class="panel-title">testXpert</text>'
-            '<rect x="1325" y="210" width="500" height="390" class="plot-bg"/>'
-            f'<rect x="1325" y="210" width="500" height="390" class="frame {missing_class}"/>'
-            f'<text x="1575" y="405" class="missing" text-anchor="middle">{missing_text}</text>'
-        )
-        zwick_note = ""
-    axis_text = ", ".join(f"{float(value):g}" for value in axis)
-    warning_text = " | ".join(warnings[-2:]) if warnings else ""
-    banner_class = {"critical": "quality-critical", "warning": "quality-warning", "ok": "quality-ok"}[overall_severity]
-    banner_text = quality["label"] + (" — REPEAT TEST" if quality["repeat_required"] else "")
-    if not zwick_expected:
-        banner_text += " — CAMERA TRACE ONLY; LOAD NOT VERIFIED"
-    scope_text = ("Scope: camera trace only. Load limits are NOT verified."
-                  if not zwick_expected else "Scope: camera trace and available load data. Automated screening; confirm the configured protocol.")
-    ordered_findings = sorted(quality_findings, key=lambda item: {"critical":0,"warning":1,"info":2}[item.severity])
-    import textwrap
-    quality_rows = []
-    cursor = 775
-    for finding in ordered_findings:
-        row_class = {"critical":"finding-critical","warning":"finding-warning","info":"note"}[finding.severity]
-        for text in (f"{finding.severity.upper()}: {finding.title}. {finding.detail}",
-                     "SOLUTION: " + finding.solution):
-            for line in textwrap.wrap(text, width=185):
-                quality_rows.append(f'<text x="95" y="{cursor}" class="{row_class}">{html.escape(line)}</text>')
-                cursor += 23
-        cursor += 12
-    if not quality_rows:
-        quality_rows.append('<text x="95" y="775" class="note">No rejection or review criterion was triggered. Retain the raw data and verify the intended protocol.</text>')
-        cursor = 808
-    canvas_height = max(880, cursor + 45)
-    quality_details = "\n".join(quality_rows)
-    document = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg id="rom-figure" xmlns="http://www.w3.org/2000/svg" width="1920" height="{canvas_height}" viewBox="0 0 1920 {canvas_height}">
-  <style>
-    .background {{ fill:#fff; }} .plot-bg {{ fill:#f8fafc; }}
-    .frame {{ fill:none;stroke:#334155;stroke-width:1.3; }}
-    .frame.alert-warning {{ stroke:#f59e0b;stroke-width:4; }}
-    .frame.alert-critical {{ stroke:#dc2626;stroke-width:5; }}
-    .grid {{ stroke:#cbd5e1;stroke-width:1;opacity:.65; }}
-    .limit {{ stroke:#2563eb;stroke-width:1.5;stroke-dasharray:8 6; }}
-    .peak-gap {{ fill:#ef4444;fill-opacity:.20;stroke:#dc2626;stroke-width:2;stroke-dasharray:6 4;vector-effect:non-scaling-stroke; }}
-    .visibility-gap {{ fill:#f59e0b;fill-opacity:.22;stroke:#d97706;stroke-width:2; }}
-    .frame-gap {{ fill:#3b82f6;fill-opacity:.18;stroke:#2563eb;stroke-width:2; }}
-    .unknown-gap {{ fill:#94a3b8;fill-opacity:.24;stroke:#64748b;stroke-width:2; }}
-    .title {{ font-family:Arial,sans-serif;font-size:28px;font-weight:700;fill:#0f172a; }}
-    .subtitle {{ font-family:Arial,sans-serif;font-size:16px;fill:#475569; }}
-    .panel-title {{ font-family:Arial,sans-serif;font-size:17px;font-weight:700;fill:#0f172a; }}
-    .axis-label {{ font-family:Arial,sans-serif;font-size:15px;fill:#1e293b; }}
-    .tick,.legend {{ font-family:Arial,sans-serif;font-size:12px;fill:#475569; }}
-    .note {{ font-family:Arial,sans-serif;font-size:14px;fill:#64748b; }}
-    .warning {{ font-family:Arial,sans-serif;font-size:13px;fill:#9a3412; }}
-    .missing {{ font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#64748b; }}
-    .quality-ok {{ fill:#dcfce7;stroke:#16a34a;stroke-width:2; }}
-    .quality-warning {{ fill:#fef3c7;stroke:#f59e0b;stroke-width:3; }}
-    .quality-critical {{ fill:#fee2e2;stroke:#dc2626;stroke-width:4; }}
-    .quality-text {{ font-family:Arial,sans-serif;font-size:19px;font-weight:700;fill:#0f172a; }}
-    .finding-warning {{ font-family:Arial,sans-serif;font-size:14px;font-weight:700;fill:#92400e; }}
-    .finding-critical {{ font-family:Arial,sans-serif;font-size:14px;font-weight:700;fill:#b91c1c; }}
-    .zoom-help {{ font-family:Arial,sans-serif;font-size:13px;fill:#475569; }}
-  </style>
-  <rect width="1920" height="{canvas_height}" class="background"/>
-  <text x="70" y="48" class="title">5-Marker ROM Analysis – {html.escape(mode)} – {html.escape(source_name)}</text>
-  <text x="70" y="80" class="subtitle">Ref {markers['reference']}; Clamp {markers['clamp_up']}/{markers['clamp_down']}; Vertebra {markers['vertebra_cranial']}/{markers['vertebra_caudal']}; axis [{html.escape(axis_text)}]</text>
-  <rect x="70" y="101" width="1780" height="55" rx="8" class="{banner_class}"/>
-  <text x="95" y="136" class="quality-text">{html.escape(banner_text)}</text>
-  {first_plot}
-  {second_plot}
-  {third_plot}
-  <text x="95" y="676" class="note">Bands: orange = marker not recognized; blue = no recorded frame; grey = gap origin unknown; red = other signal fault.</text>
-  <text x="95" y="697" class="note">{html.escape(zwick_note)}</text>
-  <text x="95" y="720" class="warning">{html.escape(warning_text)}</text>
-  <text x="95" y="746" class="note">{html.escape(scope_text)}</text>
-  {quality_details}
-  <text x="1825" y="{canvas_height-15}" class="zoom-help" text-anchor="end">Zoom: mouse wheel · Pan: drag · Reset: double-click</text>
-  <script type="application/ecmascript"><![CDATA[
-    (function () {{
-      const svg = document.getElementById("rom-figure");
-      const original = {{x: 0, y: 0, width: 1920, height: {canvas_height}}};
-      let view = {{...original}};
-      let drag = null;
-      function apply() {{
-        svg.setAttribute("viewBox", `${{view.x}} ${{view.y}} ${{view.width}} ${{view.height}}`);
-      }}
-      function pointer(event) {{
-        const rect = svg.getBoundingClientRect();
-        return {{
-          x: view.x + (event.clientX - rect.left) / rect.width * view.width,
-          y: view.y + (event.clientY - rect.top) / rect.height * view.height
-        }};
-      }}
-      svg.style.cursor = "grab";
-      svg.style.touchAction = "none";
-      svg.addEventListener("wheel", function (event) {{
-        event.preventDefault();
-        const anchor = pointer(event);
-        const factor = event.deltaY < 0 ? 0.80 : 1.25;
-        const nextWidth = Math.max(180, Math.min(7680, view.width * factor));
-        const nextHeight = nextWidth * original.height / original.width;
-        const scaleX = nextWidth / view.width;
-        const scaleY = nextHeight / view.height;
-        view.x = anchor.x - (anchor.x - view.x) * scaleX;
-        view.y = anchor.y - (anchor.y - view.y) * scaleY;
-        view.width = nextWidth;
-        view.height = nextHeight;
-        apply();
-      }}, {{passive: false}});
-      svg.addEventListener("pointerdown", function (event) {{
-        if (event.button !== 0) return;
-        drag = {{clientX: event.clientX, clientY: event.clientY, viewX: view.x, viewY: view.y}};
-        svg.setPointerCapture(event.pointerId);
-        svg.style.cursor = "grabbing";
-      }});
-      svg.addEventListener("pointermove", function (event) {{
-        if (!drag) return;
-        const rect = svg.getBoundingClientRect();
-        view.x = drag.viewX - (event.clientX - drag.clientX) / rect.width * view.width;
-        view.y = drag.viewY - (event.clientY - drag.clientY) / rect.height * view.height;
-        apply();
-      }});
-      function stopDrag() {{ drag = null; svg.style.cursor = "grab"; }}
-      svg.addEventListener("pointerup", stopDrag);
-      svg.addEventListener("pointercancel", stopDrag);
-      svg.addEventListener("dblclick", function (event) {{
-        event.preventDefault();
-        view = {{...original}};
-        apply();
-      }});
-    }})();
-  ]]></script>
-</svg>
-'''
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(document, encoding="utf-8")
-    embedded = document.split("?>", 1)[-1].lstrip()
-    output.with_suffix(".html").write_text(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<title>5-Marker ROM Analysis</title>"
-        "<style>html,body{margin:0;background:#fff}svg{display:block;width:100%;height:auto}</style>"
-        "</head><body>" + embedded + "</body></html>",
-        encoding="utf-8",
-    )
+        title = "testXpert · load versus displacement"
+        panels.append((title, _svg_multi_plot(
+            [("testXpert", zwick.displacements, zwick.loads, blue)],
+            (85., 110., 750., 345.), f"Displacement [{zwick.displacement_unit}]",
+            f"Load [{zwick.load_unit}]", title,
+            horizontal_lines=[float(v) for v in config.get("load_limits", {}).get(mode, [])])))
+    duration = max(data.times_s)-min(data.times_s)
+    stats = [("Vertebral segment ROM", f"{curve_quality.span(curves['segmental']):.3f} {unit}"),
+             ("Clamp segment ROM", f"{curve_quality.span(curves['clamp_segmental']):.3f} {unit}"),
+             ("Recorded duration", f"{duration:.2f} s"),
+             ("Complete marker samples", str(len(data.times_s)))]
+    write_report(output, source_name=source_name, mode=mode, markers=markers, axis=axis,
+        quality=quality_summary(quality_findings), findings=quality_findings,
+        quality_metrics=quality_metrics, camera_only=not zwick_expected, stats=stats,
+        panels=panels, warnings=warnings)
 
 
 def write_motion_csv(

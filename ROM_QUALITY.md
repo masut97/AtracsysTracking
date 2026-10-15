@@ -8,6 +8,14 @@ The English figure and JSON report use three outcomes:
 
 Approval is an automated measurement-quality result, not proof of specimen integrity or a clinical conclusion. Camera-only retrospective analysis explicitly displays **CAMERA TRACE ONLY; LOAD NOT VERIFIED**. Full-test approval requires the corresponding machine load data and the configured protocol. Camera curves alone cannot detect every incorrect load or setup.
 
+## Reading the report
+
+The local HTML report separates **Overview**, **Marker pairs**, **Problems & solutions**, and **Details**. A **Load data** tab is included when a load curve is available. The outcome, required action and approval scope remain above the tabs. Overview shows the segment curve, ROM values and the main rejection/review findings; informational notes and technical screening metrics are in Details.
+
+Marker pairs show cranial/upper and caudal/lower traces separately. Dashed blue denotes the clamp; solid orange denotes the vertebra. The pairs use independent vertical scales. Legends sit outside the plotted curves. Shaded intervals refer to the synchronized five-marker dataset; shading a panel does not imply that both of its markers were lost. Refer to the finding for marker identity and evidence.
+
+Each problem card separates the observed symptom from the recommended next step. All problems remain in the complete SVG export and the print view, including findings outside the selected HTML tab. Zoom controls act on individual plots; ordinary page scrolling is preserved. The interface works offline and fetches no external resources. The display reduction preserves each bin's extrema and gap boundaries; displayed point reduction does not change raw ROM or screening results.
+
 ## Mathematical checks
 
 Rule version 2.1 uses acquisition order rather than sorting away clock errors. Repeated/backwards timestamps, invalid marker rotations and nonfinite poses prevent approval. Frames with no visible required markers are included in completeness accounting. Completely unusable input produces a red result figure rather than an empty successful analysis.
