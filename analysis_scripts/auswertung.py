@@ -838,7 +838,8 @@ def _nice_ticks(values: Sequence[float], count: int = 6) -> tuple[float, float, 
 def _format_tick(value: float) -> str:
     if abs(value) >= 1000 or (0 < abs(value) < 0.001):
         return f"{value:.2e}"
-    return f"{value:.6g}".replace("-0", "0")
+    formatted = f"{value:.6g}"
+    return "0" if formatted == "-0" else formatted
 
 
 def _svg_plot(

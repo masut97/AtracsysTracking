@@ -33,7 +33,7 @@ h1{font-size:28px;line-height:1.25;margin:0 0 8px}h2{font-size:22px;margin:0 0 1
 button,a.button{font:inherit;cursor:pointer;border:1px solid #a7b9cc;color:#244e78;background:white;border-radius:6px;padding:7px 12px;text-decoration:none;display:inline-block}
 button:hover,a.button:hover{background:#edf4fb}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #1976d2;outline-offset:3px}
 [hidden]{display:none!important}.overview{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:18px;align-items:start}.pair-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.plot{min-width:0}.plot svg{display:block;width:100%;height:auto}.plot-tools{display:flex;gap:6px;align-items:center;justify-content:flex-end}.plot-tools small{margin-right:auto;color:#53657b}
+.plot{min-width:0;overflow-x:auto}.plot svg{display:block;width:100%;min-width:600px;height:auto}.plot-tools{display:flex;gap:6px;align-items:center;justify-content:flex-end}.plot-tools small{margin-right:auto;color:#53657b}
 .legend-bands{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#435a73;margin-top:12px}.swatch{display:inline-block;width:12px;height:12px;margin-right:5px;border:1px solid currentColor;vertical-align:-1px}
 .finding{border-left:5px solid var(--accent);margin-bottom:16px}.finding .severity{font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.04em}
 .finding p{overflow-wrap:anywhere}.next-step{background:#f1f6fa;border-radius:6px;padding:12px 14px;margin-top:14px}.finding summary{cursor:pointer;color:#365a7d;margin-top:10px}
@@ -42,7 +42,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;bor
 .toolbar{display:flex;justify-content:flex-end;gap:8px;margin:16px 0}.notice{border-left:4px solid #7891aa;padding:12px 16px;background:#f5f8fb;margin-top:12px}
 @media(max-width:1050px){.overview,.pair-grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){main{padding:12px}.card,.status,.metric{padding:15px}.tabs button{padding:10px;font-size:14px}h1{font-size:23px}.metric strong{font-size:21px}.status-line h2{font-size:24px}}
-@media print{body{background:white}main{max-width:none;padding:0}.tabs,.toolbar,.plot-tools{display:none}.tab-panel[hidden]{display:block!important}.tab-panel{margin:20px 0}.overview,.pair-grid{display:block}.card{margin:14px 0;break-inside:avoid}.finding details>*{display:block}.finding details>summary{display:none}.foot{display:none}}
+@media print{body{background:white}main{max-width:none;padding:0}.tabs,.toolbar,.plot-tools{display:none}.plot svg{min-width:0}.tab-panel[hidden]{display:block!important}.tab-panel{margin:20px 0}.overview,.pair-grid{display:block}.card{margin:14px 0;break-inside:avoid}.finding details>*{display:block}.finding details>summary{display:none}.foot{display:none}}
 '''
 
 SCRIPT = '''

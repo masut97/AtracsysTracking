@@ -80,3 +80,8 @@ def test_display_reduction_preserves_a_narrow_extreme_and_breaks_at_a_gap(rom):
     expected_y=110+345-(10-low)/(high-low)*345
     assert any(float(y)==pytest.approx(expected_y,abs=.01) for _x,y in points)
     assert path.attrib['d'].count('M ')==2
+
+
+@pytest.mark.parametrize('value,expected',[(-.5,'-0.5'),(-.02,'-0.02'),(-0.,'0'),(.5,'0.5')])
+def test_axis_labels_preserve_negative_fractional_values(rom,value,expected):
+    assert rom.common._format_tick(value)==expected
