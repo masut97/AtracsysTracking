@@ -23,7 +23,7 @@ def fixture(rom, ratio=0.9, missing=0, registration=0.2):
 
 @pytest.mark.parametrize("ratio,rating,code", [
     (0.9, "good", None), (0.6, "good", None),
-    (0.4, "good", None), (1.2, "good", None), (1.5,"medium","excess_motion_transfer"),
+    (0.4, "good", None), (1.2, "bad", "segment_exceeds_fixture"), (1.5,"bad","segment_exceeds_fixture"),
 ])
 def test_quality_rates_smooth_measurements_and_explains_slip(rom, ratio, rating, code):
     tracking, curves, machine = fixture(rom, ratio)
@@ -35,7 +35,7 @@ def test_quality_rates_smooth_measurements_and_explains_slip(rom, ratio, rating,
         assert code in {finding.code for finding in findings}
         assert summary["hints"]
     else:
-        assert not findings
+        assert not any(f.severity!='info' for f in findings)
 
 
 @pytest.mark.parametrize("missing,registration,code", [

@@ -110,6 +110,8 @@ class RomTrackingData:
     incomplete_samples: int
     source_format: str
     invalid_samples: int = 0
+    received_times_s: tuple[float, ...] = ()
+    unseen_marker_events: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
     frame_times: dict[str, float] = {}
     total_rows = 0
     invalid_rows = 0
+    unseen = {}
     wanted = set(marker_ids)
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
@@ -263,12 +266,6 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
             )
         for row in reader:
             total_rows += 1
-            try:
-                marker_id = int(row["geometry_id"])
-            except (TypeError, ValueError):
-                continue
-            if marker_id not in wanted:
-                continue
             key_and_time = _frame_key_and_time(row)
             if key_and_time is None:
                 invalid_rows += 1
@@ -278,7 +275,18 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
             if sample in frame_times and abs(frame_times[sample]-sample_time)>1e-8:
                 invalid_rows += 1
             frame_times.setdefault(sample, sample_time)
+            try:
+                marker_id = int(row["geometry_id"])
+            except (TypeError, ValueError):
+                if row.get('visible','')=='0':unseen.setdefault(sample,set()).update(wanted)
+                continue
+            if marker_id not in wanted:
+                continue
             if row.get("visible", "") != "1":
+                if row.get("visible", "") == "0":
+                    unseen.setdefault(sample,set()).add(marker_id)
+                else:
+                    invalid_rows += 1
                 continue
             try:
                 rotation = common._matrix([float(row[name]) for name in common.ROTATION_COLUMNS])
@@ -314,6 +322,8 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
         incomplete_samples=len(frames) - len(complete),
         source_format="atracsys_long_csv",
         invalid_samples=invalid_rows,
+        received_times_s=tuple(value-start for value in frame_times.values()),
+        unseen_marker_events=tuple((frame_times[key]-start,tuple(sorted(ids))) for key,ids in unseen.items()),
     )
 
 
@@ -638,6 +648,24 @@ def _marker_translation(
     return tuple(value - baseline for value in raw)
 
 
+def _fixture_translation_prediction(data, reference_id, clamp_id, bone_id, axis, count, sign):
+    """Expected bone-point motion under rigid fixation, including rotation lever arms."""
+    clamp_positions=_positions_in_reference(data,reference_id,clamp_id)
+    bone_positions=_positions_in_reference(data,reference_id,bone_id)
+    rotations=[common.multiply(common.transpose(ref.rotation),clamp.rotation)
+               for ref,clamp in zip(data.poses[reference_id],data.poses[clamp_id])]
+    offsets=[_matrix_vector(common.transpose(rotation),tuple(b-c for b,c in zip(bone,clamp)))
+             for rotation,bone,clamp in zip(rotations[:count],bone_positions[:count],clamp_positions[:count])]
+    offset=tuple(statistics.mean(value[i] for value in offsets) for i in range(3))
+    normalized=common._normalize_axis(axis)
+    raw=[]
+    for rotation,position in zip(rotations,clamp_positions):
+        arm=_matrix_vector(rotation,offset)
+        raw.append(sum((p+a)*component for p,a,component in zip(position,arm,normalized))*sign)
+    baseline=statistics.mean(raw[:count])
+    return tuple(value-baseline for value in raw)
+
+
 def calculate_motion(
     data: RomTrackingData,
     mode: str,
@@ -686,6 +714,9 @@ def calculate_motion(
             )
             for name, marker_id in named_markers.items()
         }
+        for label,clamp_name,bone_name in (('cranial','clamp_up','vertebra_cranial'),('caudal','clamp_down','vertebra_caudal')):
+            curves[label+'_fixture_expected']=_fixture_translation_prediction(data,reference_id,
+                named_markers[clamp_name],named_markers[bone_name],axis,baseline_count,sign)
         segmental = tuple(
             cranial - caudal
             for cranial, caudal in zip(
@@ -774,6 +805,79 @@ def _edge_extrema(values: Sequence[float], edge_fraction: float) -> list[str]:
     return result
 
 
+def _tracking_evidence(tracking, findings):
+    """Separate visibility observations from absent recorded frames; do not infer SDK causes."""
+    events=tracking.unseen_marker_events
+    received=tracking.received_times_s
+    long_form=tracking.source_format=='atracsys_long_csv' and bool(received)
+    gaps=[finding for finding in findings if finding.code in {'peak_data_gap','borderline_gap'}]
+    origins={}
+    result=[]
+    for finding in findings:
+        if finding in gaps:
+            from dataclasses import replace
+            grouped={}
+            for start,end in finding.intervals:
+                inside=[t for t in received if start<t<end]
+                invisible={t for t,_ids in events if start<t<end}
+                if long_form and inside and all(t in invisible for t in inside):origin='marker_not_recognized'
+                elif long_form and not inside:origin='no_recorded_camera_frame'
+                else:origin='unknown_or_invalid_pose'
+                grouped.setdefault(origin,[]).append((start,end))
+                origins[origin]=origins.get(origin,0)+1
+            for origin,intervals in grouped.items():
+                if origin=='marker_not_recognized':
+                    title='Peak unavailable: marker not recognized'
+                    detail='Received frames explicitly mark required markers as invisible.'
+                    solution='Reposition the markers and inspect/clean or replace dirty or damaged fiducials. Keep all markers in view and repeat.'
+                elif origin=='no_recorded_camera_frame':
+                    title='Peak unavailable: no recorded camera frame'
+                    detail='No saved frame exists inside the interval; this is not evidence of dirty fiducials.'
+                    solution='Inspect acquisition logs, camera/network/PC load, recording frequency and export. Recover complete data or repeat; do not diagnose a visibility failure from this gap alone.'
+                else:
+                    title='Peak unavailable: gap origin unknown'
+                    detail='This export does not establish whether frames or marker poses were omitted.'
+                    solution='Compare acquisition and visibility logs with the original export. Resolve the gap source and repeat if the peak cannot be recovered.'
+                result.append(replace(finding,title=title,detail=f'{len(intervals)} affected intervals. '+detail,
+                                      solution=solution,intervals=tuple(intervals)))
+            continue
+        result.append(finding)
+    recorded=received if long_form else tracking.times_s
+    positive=[b-a for a,b in zip(recorded,recorded[1:]) if b>a]
+    recorded_gaps=[]
+    if positive:
+        median=statistics.median(positive)
+        recorded_gaps=[(a,b) for a,b in zip(recorded,recorded[1:]) if b-a>1.75*median]
+    if recorded_gaps:
+        if long_form:
+            result.append(QualityFinding('info','recorded_camera_frame_gap','No recorded camera frame inside interval',
+                f'{len(recorded_gaps)} timestamp intervals have no saved frame. Acquisition, transport, scheduling and export must be distinguished; unseen marker spheres are not established by this evidence.',
+                'Inspect camera/acquisition logs, network, PC load and the selected recording rate. Recover missing observations or repeat if motion or a peak is unverified.',tuple(recorded_gaps)))
+        else:
+            result.append(QualityFinding('info','unknown_tracking_gap','Tracking gap: origin unknown',
+                'This historical export contains no frame heartbeat or explicit visibility flags. Missing camera frames cannot be distinguished from omitted marker poses.',
+                'Use original camera and visibility logs where available; do not diagnose dirty reflectors from timestamps alone.',tuple(recorded_gaps)))
+    if events:
+        steps=[b-a for a,b in zip(received,received[1:]) if b>a]
+        step=statistics.median(steps) if steps else .01
+        groups=[]
+        for time,ids in events:
+            if groups and time-groups[-1][1]<=1.75*step:
+                groups[-1]=(groups[-1][0],time,groups[-1][2]|set(ids))
+            else:groups.append((time,time,set(ids)))
+        fraction=len(events)/max(1,len(received))
+        severity='critical' if fraction>.05 else 'warning' if fraction>.02 else 'info'
+        ids=sorted({marker for _,markers in events for marker in markers})
+        result.append(QualityFinding(severity,'marker_not_recognized','Marker not recognized in a received frame',
+            f'{len(events)} received frames explicitly lack visible marker poses for IDs {ids}. A camera frame exists; this is not a missing-camera-frame diagnosis.',
+            'Check marker placement and orientation, occlusion, and dirty/damaged reflectors. Clean/replace fiducials, restore visibility, and repeat if the affected motion cannot be recovered.',
+            tuple((a-step/2,b+step/2) for a,b,_ in groups)))
+    return result,{'gap_origin_counts':origins,'explicit_invisible_frame_count':len(events),
+                   'recorded_frame_gap_count':len(recorded_gaps),
+                   'received_frame_count':len(received) if received else None,
+                   'visibility_evidence_available':long_form}
+
+
 def evaluate_quality(
     tracking: RomTrackingData,
     curves: dict[str, tuple[float, ...]],
@@ -786,6 +890,8 @@ def evaluate_quality(
     settings = dict(config.get("quality", {}))
     raw, metrics = curve_quality.screen(tracking.times_s, curves, mode, settings)
     findings = [QualityFinding(**item) for item in raw]
+    findings,evidence=_tracking_evidence(tracking,findings)
+    metrics.update(evidence)
     def add(level, code, title, detail, solution):
         findings.append(QualityFinding(level, code, title, detail, solution))
     metrics["invalid_input_rows"] = tracking.invalid_samples
@@ -944,9 +1050,12 @@ def _svg_multi_plot(
         clipped_end = max(x_min, min(x_max, float(end)))
         band_x = sx(min(clipped_start, clipped_end))
         band_width = max(4.0, abs(sx(clipped_end) - sx(clipped_start)))
+        band_class=('visibility-gap' if 'marker not recognized' in label.lower() else
+                    'frame-gap' if 'no recorded camera frame' in label.lower() else
+                    'unknown-gap' if 'origin unknown' in label.lower() else 'peak-gap')
         parts.append(
             f'<rect x="{band_x:.2f}" y="{top:.2f}" width="{band_width:.2f}" '
-            f'height="{height:.2f}" class="peak-gap"><title>{html.escape(label)}</title></rect>'
+            f'height="{height:.2f}" class="{band_class}"><title>{html.escape(label)}</title></rect>'
         )
     frame_class = "frame" if alert_level is None else f"frame alert-{alert_level}"
     parts.append(f'<rect x="{left:.1f}" y="{top:.1f}" width="{width:.1f}" height="{height:.1f}" class="{frame_class}" vector-effect="non-scaling-stroke"/>')
@@ -1159,7 +1268,7 @@ def render_figure(
     ordered_findings = sorted(quality_findings, key=lambda item: {"critical":0,"warning":1,"info":2}[item.severity])
     import textwrap
     quality_rows = []
-    cursor = 752
+    cursor = 775
     for finding in ordered_findings:
         row_class = {"critical":"finding-critical","warning":"finding-warning","info":"note"}[finding.severity]
         for text in (f"{finding.severity.upper()}: {finding.title}. {finding.detail}",
@@ -1169,8 +1278,8 @@ def render_figure(
                 cursor += 23
         cursor += 12
     if not quality_rows:
-        quality_rows.append('<text x="95" y="752" class="note">No rejection or review criterion was triggered. Retain the raw data and verify the intended protocol.</text>')
-        cursor = 785
+        quality_rows.append('<text x="95" y="775" class="note">No rejection or review criterion was triggered. Retain the raw data and verify the intended protocol.</text>')
+        cursor = 808
     canvas_height = max(880, cursor + 45)
     quality_details = "\n".join(quality_rows)
     document = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -1183,6 +1292,9 @@ def render_figure(
     .grid {{ stroke:#cbd5e1;stroke-width:1;opacity:.65; }}
     .limit {{ stroke:#2563eb;stroke-width:1.5;stroke-dasharray:8 6; }}
     .peak-gap {{ fill:#ef4444;fill-opacity:.20;stroke:#dc2626;stroke-width:2;stroke-dasharray:6 4;vector-effect:non-scaling-stroke; }}
+    .visibility-gap {{ fill:#f59e0b;fill-opacity:.22;stroke:#d97706;stroke-width:2; }}
+    .frame-gap {{ fill:#3b82f6;fill-opacity:.18;stroke:#2563eb;stroke-width:2; }}
+    .unknown-gap {{ fill:#94a3b8;fill-opacity:.24;stroke:#64748b;stroke-width:2; }}
     .title {{ font-family:Arial,sans-serif;font-size:28px;font-weight:700;fill:#0f172a; }}
     .subtitle {{ font-family:Arial,sans-serif;font-size:16px;fill:#475569; }}
     .panel-title {{ font-family:Arial,sans-serif;font-size:17px;font-weight:700;fill:#0f172a; }}
@@ -1207,9 +1319,10 @@ def render_figure(
   {first_plot}
   {second_plot}
   {third_plot}
-  <text x="95" y="676" class="note">{html.escape(zwick_note)}</text>
-  <text x="95" y="699" class="warning">{html.escape(warning_text)}</text>
-  <text x="95" y="724" class="note">{html.escape(scope_text)}</text>
+  <text x="95" y="676" class="note">Bands: orange = marker not recognized; blue = no recorded frame; grey = gap origin unknown; red = other signal fault.</text>
+  <text x="95" y="697" class="note">{html.escape(zwick_note)}</text>
+  <text x="95" y="720" class="warning">{html.escape(warning_text)}</text>
+  <text x="95" y="746" class="note">{html.escape(scope_text)}</text>
   {quality_details}
   <text x="1825" y="{canvas_height-15}" class="zoom-help" text-anchor="end">Zoom: mouse wheel · Pan: drag · Reset: double-click</text>
   <script type="application/ecmascript"><![CDATA[

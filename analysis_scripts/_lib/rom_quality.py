@@ -2,7 +2,7 @@
 import math
 import statistics
 
-VERSION = "2.0"
+VERSION = "2.1"
 DEFAULTS = {
     "noise_uncertainty_review": 0.10,
     "noise_uncertainty_reject": 0.15,
@@ -12,6 +12,10 @@ DEFAULTS = {
     "gap_duration_fraction_reject": 0.03,
     "correlation_reject": 0.35,
     "correlation_review": 0.65,
+    "fixture_rotation_floor_deg": 0.02,
+    "fixture_translation_floor_mm": 0.0,
+    "fixture_noise_multiplier": 6.0,
+    "fixture_deficit_reject_tolerance_multiplier": 1.5,
 }
 
 
@@ -36,6 +40,104 @@ def correlation(left, right):
     if xx * yy <= 1e-24:
         return None
     return sum((x-a)*(y-b) for x,y in zip(left,right)) / math.sqrt(xx*yy)
+
+
+def empirical_noise(times, values):
+    steps=[b-a for a,b in zip(times,times[1:])]
+    positive=[v for v in steps if v>0]
+    if not positive:return 0.0
+    dt=statistics.median(positive)
+    residuals=[]
+    for i in range(1,len(values)-1):
+        before,after=steps[i-1],steps[i]
+        if not (.25*dt<=before<=1.75*dt and .25*dt<=after<=1.75*dt):continue
+        weight=before/(before+after)
+        residuals.append((values[i]-(1-weight)*values[i-1]-weight*values[i+1])/
+                         math.sqrt(1+(1-weight)**2+weight**2))
+    center=statistics.median(residuals) if residuals else 0.0
+    return 1.4826*statistics.median([abs(v-center) for v in residuals]) if residuals else 0.0
+
+
+def fixture_checks(times, curves, mode, settings):
+    """Operator-defined same-bone attachment checks, with explicit noise tolerances."""
+    limits={**DEFAULTS,**settings}
+    findings,metrics=[],{}
+    angular=mode in {"FE","LB","AR"}
+    unit="deg" if angular else "mm"
+    floor=limits['fixture_rotation_floor_deg'] if angular else limits['fixture_translation_floor_mm']
+    pairs=[('cranial','vertebra_cranial','clamp_up','cranial_fixture_expected'),
+           ('caudal','vertebra_caudal','clamp_down','caudal_fixture_expected')]
+    for label,bone_name,clamp_name,expected_name in pairs:
+        bone=curves.get(bone_name,())
+        # Translational marker locations require a full rigid-body lever-arm prediction.
+        fixture=curves.get(clamp_name,()) if angular else curves.get(expected_name,())
+        if len(bone)!=len(times) or len(fixture)!=len(times):continue
+        if not all(math.isfinite(v) for series in (bone,fixture) for v in series):continue
+        difference=[a-b for a,b in zip(bone,fixture)]
+        tolerance=max(float(floor),limits['fixture_noise_multiplier']*empirical_noise(times,difference),1e-9)
+        bone_rom,fixture_rom=span(bone),span(fixture)
+        excess=bone_rom-fixture_rom
+        metrics[label+'_fixture_comparison']={'vertebra_rom':bone_rom,'expected_fixture_rom':fixture_rom,
+            'tolerance':tolerance,'unit':unit,'method':'reference_rotation' if angular else 'rigid_body_lever_arm_prediction'}
+        def add(level,code,title,detail,solution):
+            findings.append(dict(severity=level,code=code,title=title,detail=detail,solution=solution,intervals=()))
+        if excess>tolerance+1e-9:
+            add('critical',label+'_exceeds_fixture',label.capitalize()+' vertebra moves more than its fixture',
+                f"Excess ROM {excess:.4g} {unit}; allowed noise-aware difference {tolerance:.4g} {unit}. Same-bone rigid attachment is assumed.",
+                ("Poor lower-clamp purchase is suspected. Inspect lower fixation and marker contact/anchorage. Correct and repeat the test." if label=='caudal' else
+                 "Check soft-tissue or clamp contact with the marker, bone-only anchorage (not across the disc), marker identity and fixation. Correct and repeat the test."))
+        elif label=='cranial' and -excess>limits['fixture_deficit_reject_tolerance_multiplier']*tolerance+1e-9:
+            add('critical','cranial_fixture_motion_loss','Cranial vertebra does not follow the upper fixture',
+                f"ROM deficit {-excess:.4g} {unit} exceeds 1.5 times the {tolerance:.4g} {unit} noise-aware allowance.",
+                "Poor clamp purchase or relative fixation movement is suspected. Inspect and secure upper-clamp fixation to the vertebra, then repeat.")
+        elif label=='cranial' and -excess>tolerance+1e-9:
+            add('warning','borderline_cranial_fixation','Borderline cranial-to-fixture motion loss',
+                f"Deficit {-excess:.4g} {unit} is between 1 and 1.5 times the {tolerance:.4g} {unit} noise-aware allowance.",
+                "Check upper-clamp purchase and the individual marker traces; repeat if fixation movement is confirmed.")
+    # The operator's upper bound also applies to aggregate angular segment ROM.
+    if angular and all(len(curves.get(k,()))==len(times) for k in ('segmental','clamp_segmental')):
+        y,c=curves['segmental'],curves['clamp_segmental']
+        tolerance=max(float(floor),limits['fixture_noise_multiplier']*empirical_noise(times,[a-b for a,b in zip(y,c)]),1e-9)
+        metrics['segment_fixture_excess_tolerance']=tolerance
+        if span(y)-span(c)>tolerance+1e-9:
+            findings.append(dict(severity='critical',code='segment_exceeds_fixture',title='Segment motion exceeds clamp motion',
+                detail=f"Excess {span(y)-span(c):.4g} deg exceeds a {tolerance:.4g} deg noise-aware allowance.",
+                solution='Inspect marker contact, bone-only attachment, IDs and fixation. Correct the cause and repeat the test.',intervals=()))
+    return findings,metrics
+
+
+def slope_changes(times, curves):
+    """Detect abrupt changes between two locally linear, same-direction branches."""
+    if len(times)<24 or any(b<=a for a,b in zip(times,times[1:])):return []
+    duration=times[-1]-times[0]
+    window=max(.15,.02*duration)
+    events=[]
+    def fit(points):
+        x,y=zip(*points);xm,ym=statistics.mean(x),statistics.mean(y)
+        xx=sum((v-xm)**2 for v in x);yy=sum((v-ym)**2 for v in y)
+        if xx<=0 or yy<=1e-24:return 0.,0.
+        slope=sum((a-xm)*(b-ym) for a,b in points)/xx
+        residual=sum((b-(ym+slope*(a-xm)))**2 for a,b in points)
+        return slope,1-residual/yy
+    # Time bins cap work and prevent a high frame rate from counting the same event repeatedly.
+    for name in ('clamp_up','clamp_down','vertebra_cranial','vertebra_caudal'):
+        values=curves.get(name,())
+        if len(values)!=len(times) or span(values)<=1e-12:continue
+        bins=[[] for _ in range(min(300,len(times)))]
+        for t,y in zip(times,values):bins[min(len(bins)-1,int((t-times[0])/max(duration,1e-12)*len(bins)))].append((t,y))
+        points=[(statistics.mean([p[0] for p in group]),statistics.median([p[1] for p in group])) for group in bins if group]
+        noise=empirical_noise(times,values);extent=span(values);low,high=min(values),max(values)
+        last=-math.inf
+        for i,(t,y) in enumerate(points):
+            if t-last<window or not low+.1*extent<y<high-.1*extent:continue
+            left=[p for p in points[max(0,i-20):i] if t-window<=p[0]<t]
+            right=[p for p in points[i+1:i+21] if t<p[0]<=t+window]
+            if len(left)<4 or len(right)<4:continue
+            a,r1=fit(left);b,r2=fit(right)
+            if (a*b>0 and min(r1,r2)>.985 and max(abs(a),abs(b))>3*min(abs(a),abs(b))
+                    and abs(a-b)*window>max(.015*extent,8*noise)):
+                events.append((name,t-window,t+window,a,b));last=t
+    return events
 
 
 def branch_reversal(times, segment, clamp):
@@ -214,8 +316,13 @@ def screen(times, curves, mode, settings):
             add("warning", "borderline_motion_transfer", "Borderline motion consistency",
                 f"Curve correlation is {match:.2f}; hysteresis, drift or fixation changes may contribute.",
                 "Compare both loading branches and individual markers with the load trace; repeat if inconsistent.")
-    if ratio is not None and ratio > 1.30:
-        add("warning", "excess_motion_transfer", "Segment motion exceeds fixture motion",
-            f"Segment/clamp ROM ratio is {ratio:.2f}; geometry and motion coupling must be checked.",
-            "Check coordinate axes, lever arms and individual marker traces. Repeat if marker movement or a setup error is confirmed.")
+    attachment_findings,attachment_metrics=fixture_checks(times,curves,mode,settings)
+    findings.extend(attachment_findings);metrics.update(attachment_metrics)
+    changes=slope_changes(times,curves)
+    metrics['sudden_slope_change_count']=len(changes)
+    if changes:
+        add('critical','sudden_slope_change','Abrupt change in an otherwise linear slope',
+            f"{len(changes)} slope changes occur away from ordinary turning points: "+', '.join(dict.fromkeys(c[0] for c in changes))+'.',
+            'Inspect dirty/damaged fiducials, marker orientation and visibility. Also check the load trace for a real actuator/load change; correct the cause and repeat.',
+            [(a,b) for _,a,b,_,_ in changes])
     return findings, metrics
