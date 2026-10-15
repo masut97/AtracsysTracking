@@ -129,27 +129,20 @@
     ]
   },
   "quality": {
-    "vertebra_over_clamp_critical_ratio": 1.1,
-    "vertebra_under_clamp_warning_ratio": 0.7,
-    "vertebra_under_clamp_critical_ratio": 0.5,
     "minimum_clamp_rom_rotation_deg": 0.5,
     "minimum_clamp_rom_translation_mm": 0.1,
     "edge_peak_fraction": 0.03,
-    "duration_warning_fraction": 0.05,
-    "duration_critical_fraction": 0.1,
-    "incomplete_warning_fraction": 0.01,
-    "incomplete_critical_fraction": 0.05,
     "peak_gap_factor": 1.75,
-    "peak_zone_fraction": 0.2,
-    "peak_gap_min_rom_fraction": 0.03,
-    "peak_gap_min_missing_samples": 8,
-    "peak_noise_zone_fraction": 0.25,
-    "peak_noise_ratio_critical": 3.0,
-    "peak_noise_rom_fraction_critical": 0.015,
-    "time_gap_factor": 5.0,
-    "time_gap_absolute_s": 0.1,
     "registration_warning_mm": 1.0,
-    "registration_critical_mm": 2.0
+    "registration_critical_mm": 2.0,
+    "noise_uncertainty_review": 0.1,
+    "noise_uncertainty_reject": 0.15,
+    "spike_rom_fraction": 0.05,
+    "jump_rom_fraction": 0.2,
+    "gap_rom_fraction_reject": 0.05,
+    "gap_duration_fraction_reject": 0.03,
+    "correlation_reject": 0.35,
+    "correlation_review": 0.65
   },
   "open_figure": true
 }

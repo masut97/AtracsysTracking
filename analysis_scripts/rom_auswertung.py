@@ -20,6 +20,7 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
 import auswertung as common
+from _lib import rom_quality as curve_quality
 
 
 ROTATION_MODES = {"FE", "LB", "AR"}
@@ -82,25 +83,11 @@ DEFAULT_CONFIG = {
         "AC": [-150.0, 400.0],
     },
     "quality": {
-        "vertebra_over_clamp_critical_ratio": 1.10,
-        "vertebra_under_clamp_warning_ratio": 0.70,
-        "vertebra_under_clamp_critical_ratio": 0.50,
+        **curve_quality.DEFAULTS,
         "minimum_clamp_rom_rotation_deg": 0.50,
         "minimum_clamp_rom_translation_mm": 0.10,
         "edge_peak_fraction": 0.03,
-        "duration_warning_fraction": 0.05,
-        "duration_critical_fraction": 0.10,
-        "incomplete_warning_fraction": 0.01,
-        "incomplete_critical_fraction": 0.05,
         "peak_gap_factor": 1.75,
-        "peak_zone_fraction": 0.20,
-        "peak_gap_min_rom_fraction": 0.03,
-        "peak_gap_min_missing_samples": 8,
-        "peak_noise_zone_fraction": 0.25,
-        "peak_noise_ratio_critical": 3.0,
-        "peak_noise_rom_fraction_critical": 0.015,
-        "time_gap_factor": 5.0,
-        "time_gap_absolute_s": 0.10,
         "registration_warning_mm": 1.0,
         "registration_critical_mm": 2.0,
     },
@@ -122,6 +109,7 @@ class RomTrackingData:
     total_rows: int
     incomplete_samples: int
     source_format: str
+    invalid_samples: int = 0
 
 
 @dataclass(frozen=True)
@@ -155,20 +143,22 @@ class QualityFinding:
     code: str
     title: str
     detail: str
+    solution: str = ""
+    intervals: tuple = ()
 
 
 def quality_summary(findings: Sequence[QualityFinding]) -> dict:
-    """Expose the existing finding severity as a user-facing quality rating.
-
-    This is an automatic screening result; the thresholds and underlying ROM
-    calculations remain in evaluate_quality.
-    """
     status = ("critical" if any(item.severity == "critical" for item in findings)
-              else "warning" if findings else "ok")
-    rating, label = {"ok": ("good", "Gut"), "warning": ("medium", "Mittel"),
-                     "critical": ("bad", "Schlecht")}[status]
+              else "warning" if any(item.severity == "warning" for item in findings) else "ok")
+    rating, label = {"ok": ("good", "Approved"),
+                     "warning": ("medium", "Check data and if needed repeat"),
+                     "critical": ("bad", "Not approved")}[status]
     return {"status": status, "rating": rating, "label": label,
-            "hints": [item.detail for item in findings]}
+            "rule_version": curve_quality.VERSION,
+            "repeat_required": status == "critical",
+            "action": "REPEAT TEST" if status == "critical" else label,
+            "hints": [item.detail for item in findings],
+            "solutions": [item.solution for item in findings if item.solution]}
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -229,13 +219,30 @@ def _frame_key_and_time(row: dict[str, str]) -> tuple[str, float] | None:
     )
     if not sample or not time_text:
         return None
-    return sample, float(time_text)
+    try:
+        value = float(time_text)
+    except ValueError:
+        return None
+    return (sample, value) if math.isfinite(value) else None
+
+
+def _valid_pose(pose: RomPose) -> bool:
+    values = [value for row in pose.rotation for value in row] + list(pose.translation_mm)
+    if not all(math.isfinite(value) for value in values):
+        return False
+    rotation = pose.rotation
+    product = common.multiply(rotation, common.transpose(rotation))
+    determinant = sum(rotation[0][j] * (rotation[1][(j+1)%3]*rotation[2][(j+2)%3]
+                      - rotation[1][(j+2)%3]*rotation[2][(j+1)%3]) for j in range(3))
+    return (abs(determinant-1)<.01 and all(abs(product[i][j]-(i==j))<.01
+                                         for i in range(3) for j in range(3)))
 
 
 def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTrackingData:
     frames: dict[str, dict[int, RomPose]] = {}
     frame_times: dict[str, float] = {}
     total_rows = 0
+    invalid_rows = 0
     wanted = set(marker_ids)
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
@@ -260,34 +267,38 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
                 marker_id = int(row["geometry_id"])
             except (TypeError, ValueError):
                 continue
-            if marker_id not in wanted or row.get("visible", "") != "1":
+            if marker_id not in wanted:
                 continue
             key_and_time = _frame_key_and_time(row)
             if key_and_time is None:
+                invalid_rows += 1
                 continue
             sample, sample_time = key_and_time
-            rotation = common._matrix(
-                [float(row[name]) for name in common.ROTATION_COLUMNS]
-            )
-            error_text = row.get("registration_error_mm", "").strip()
-            pose = RomPose(
-                rotation=rotation,
-                translation_mm=(
-                    float(row["x_mm"]),
-                    float(row["y_mm"]),
-                    float(row["z_mm"]),
-                ),
-                registration_error_mm=float(error_text) if error_text else math.nan,
-            )
+            frames.setdefault(sample, {})
+            if sample in frame_times and abs(frame_times[sample]-sample_time)>1e-8:
+                invalid_rows += 1
+            frame_times.setdefault(sample, sample_time)
+            if row.get("visible", "") != "1":
+                continue
+            try:
+                rotation = common._matrix([float(row[name]) for name in common.ROTATION_COLUMNS])
+                error_text = row.get("registration_error_mm", "").strip()
+                pose = RomPose(rotation=rotation,
+                    translation_mm=(float(row["x_mm"]),float(row["y_mm"]),float(row["z_mm"])),
+                    registration_error_mm=float(error_text) if error_text else math.nan)
+                if not _valid_pose(pose):
+                    raise ValueError("Invalid marker pose")
+            except (TypeError,ValueError):
+                invalid_rows += 1
+                continue
             frames.setdefault(sample, {})[marker_id] = pose
-            frame_times[sample] = sample_time
 
     complete = [
         (frame_times[key], poses)
         for key, poses in frames.items()
         if all(marker_id in poses for marker_id in marker_ids)
     ]
-    complete.sort(key=lambda item: item[0])
+    # Acquisition order is evidence: sorting would hide backwards timestamps.
     if not complete:
         raise ValueError(
             "No complete five-marker samples with 299, 301, 302, 311 and 314 were found."
@@ -302,6 +313,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
         total_rows=total_rows,
         incomplete_samples=len(frames) - len(complete),
         source_format="atracsys_long_csv",
+        invalid_samples=invalid_rows,
     )
 
 
@@ -345,20 +357,25 @@ def _load_legacy_tracking(path: Path, marker_ids: Sequence[int]) -> RomTrackingD
                 values = [float(value.strip()) for value in row[:61]]
             except ValueError:
                 continue
+            if not all(math.isfinite(value) for value in values):
+                continue
+            stamp = int(round(values[0]))
+            if stamp<0 or stamp//10000000>=24 or (stamp//100000)%100>=60 or (stamp//1000)%100>=60:
+                continue
+            sample_poses = []
+            for index in range(len(marker_order)):
+                start = 1+index*12
+                sample_poses.append(RomPose(_legacy_matrix(values[start+3:start+12]),tuple(values[start:start+3])))
+            if not all(_valid_pose(pose) for pose in sample_poses):
+                continue
             sample_time = _legacy_timestamp_seconds(values[0])
             if previous_time is not None and sample_time + day_offset < previous_time - 43200:
                 day_offset += 86400.0
             sample_time += day_offset
             previous_time = sample_time
             times.append(sample_time)
-            for index, marker_id in enumerate(marker_order):
-                start = 1 + index * 12
-                poses[marker_id].append(
-                    RomPose(
-                        rotation=_legacy_matrix(values[start + 3 : start + 12]),
-                        translation_mm=tuple(values[start : start + 3]),  # type: ignore[arg-type]
-                    )
-                )
+            for marker_id, pose in zip(marker_order,sample_poses):
+                poses[marker_id].append(pose)
     if not times:
         raise ValueError("The historical MATLAB CSV contains no valid measurement rows.")
     first = times[0]
@@ -366,8 +383,9 @@ def _load_legacy_tracking(path: Path, marker_ids: Sequence[int]) -> RomTrackingD
         times_s=tuple(value - first for value in times),
         poses={marker_id: tuple(values) for marker_id, values in poses.items()},
         total_rows=total_rows,
-        incomplete_samples=0,
+        incomplete_samples=total_rows-len(times),
         source_format="legacy_matlab_wide_csv",
+        invalid_samples=total_rows-len(times),
     )
 
 
@@ -756,156 +774,6 @@ def _edge_extrema(values: Sequence[float], edge_fraction: float) -> list[str]:
     return result
 
 
-def _peak_data_gaps(
-    times_s: Sequence[float],
-    curves: dict[str, tuple[float, ...]],
-    settings: dict,
-    strict: bool = False,
-) -> list[tuple[float, float, int, tuple[str, ...]]]:
-    """Find dropped camera samples adjacent to the measured ROM extrema."""
-    positive_steps = [
-        right - left
-        for left, right in zip(times_s, times_s[1:])
-        if right > left
-    ]
-    if not positive_steps:
-        return []
-    median_step = statistics.median(positive_steps)
-    if median_step <= 0.0:
-        return []
-    gap_factor = float(settings.get("peak_gap_factor", 1.75))
-    peak_zone = min(0.49, max(0.01, float(settings.get("peak_zone_fraction", 0.20))))
-    minimum_impact = float(settings.get("peak_gap_min_rom_fraction", 0.03))
-    minimum_missing = int(settings.get("peak_gap_min_missing_samples", 8))
-    labels = {
-        "segmental": "vertebra",
-        "clamp_segmental": "Clamp",
-    }
-    result = []
-    for index, (left_time, right_time) in enumerate(zip(times_s, times_s[1:])):
-        step = right_time - left_time
-        if step <= median_step * gap_factor:
-            continue
-        affected = []
-        maximum_impact = 0.0
-        for curve_name, display_name in labels.items():
-            values = curves.get(curve_name, ())
-            if index + 1 >= len(values):
-                continue
-            finite = [float(value) for value in values if math.isfinite(value)]
-            if not finite:
-                continue
-            minimum, maximum = min(finite), max(finite)
-            span = maximum - minimum
-            if span <= 1e-12:
-                continue
-            left_value = float(values[index])
-            right_value = float(values[index + 1])
-            maximum_impact = max(
-                maximum_impact, abs(right_value - left_value) / span
-            )
-            low_limit = minimum + span * peak_zone
-            high_limit = maximum - span * peak_zone
-            near_low = min(left_value, right_value) <= low_limit
-            near_high = max(left_value, right_value) >= high_limit
-            if near_low:
-                affected.append(f"negative {display_name} peak")
-            if near_high:
-                affected.append(f"positive {display_name} peak")
-        estimated_missing = max(1, round(step / median_step) - 1)
-        if affected and (
-            strict
-            or maximum_impact >= minimum_impact
-            or estimated_missing >= minimum_missing
-        ):
-            result.append(
-                (left_time, right_time, estimated_missing, tuple(dict.fromkeys(affected)))
-            )
-    return result
-
-
-def _percentile(values: Sequence[float], fraction: float) -> float:
-    ordered = sorted(float(value) for value in values if math.isfinite(value))
-    if not ordered:
-        return 0.0
-    position = (len(ordered) - 1) * min(1.0, max(0.0, fraction))
-    lower = int(math.floor(position))
-    upper = int(math.ceil(position))
-    if lower == upper:
-        return ordered[lower]
-    weight = position - lower
-    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
-
-
-def _peak_noise_findings(
-    times_s: Sequence[float],
-    curves: dict[str, tuple[float, ...]],
-    settings: dict,
-) -> list[tuple[str, str, float, float, float, float, float, float]]:
-    """Detect high-frequency spikes localized around positive or negative ROM peaks."""
-    labels = {"segmental": "vertebra", "clamp_segmental": "clamp"}
-    zone_fraction = min(
-        0.49,
-        max(0.02, float(settings.get("peak_noise_zone_fraction", 0.25))),
-    )
-    ratio_limit = float(settings.get("peak_noise_ratio_critical", 3.0))
-    rom_fraction_limit = float(
-        settings.get("peak_noise_rom_fraction_critical", 0.015)
-    )
-    result = []
-    for curve_name, display_name in labels.items():
-        values = curves.get(curve_name, ())
-        if len(values) < 9 or len(values) != len(times_s):
-            continue
-        minimum, maximum = min(values), max(values)
-        span = maximum - minimum
-        if span <= 1e-12:
-            continue
-        roughness = [0.0] * len(values)
-        for index in range(1, len(values) - 1):
-            roughness[index] = abs(
-                float(values[index])
-                - (float(values[index - 1]) + float(values[index + 1])) / 2.0
-            )
-        low_limit = minimum + span * zone_fraction
-        high_limit = maximum - span * zone_fraction
-        zones = {
-            "negative": {index for index, value in enumerate(values) if value <= low_limit},
-            "positive": {index for index, value in enumerate(values) if value >= high_limit},
-        }
-        all_peak_indices = set().union(*zones.values())
-        rest_noise = _percentile(
-            [
-                roughness[index]
-                for index in range(1, len(values) - 1)
-                if index not in all_peak_indices
-            ],
-            0.90,
-        )
-        noise_floor = max(rest_noise, span * 1e-5, 1e-12)
-        for polarity, zone in zones.items():
-            usable = sorted(index for index in zone if 0 < index < len(values) - 1)
-            if len(usable) < 5:
-                continue
-            peak_noise = _percentile([roughness[index] for index in usable], 0.90)
-            noise_ratio = peak_noise / noise_floor
-            rom_fraction = peak_noise / span
-            if noise_ratio >= ratio_limit and rom_fraction >= rom_fraction_limit:
-                result.append(
-                    (
-                        display_name,
-                        polarity,
-                        float(times_s[usable[0]]),
-                        float(times_s[usable[-1]]),
-                        peak_noise,
-                        rest_noise,
-                        noise_ratio,
-                        rom_fraction,
-                    )
-                )
-    return result
-
-
 def evaluate_quality(
     tracking: RomTrackingData,
     curves: dict[str, tuple[float, ...]],
@@ -914,248 +782,95 @@ def evaluate_quality(
     is_active_rom: bool,
     config: dict,
     zwick_expected: bool = True,
-) -> tuple[list[QualityFinding], dict[str, float | None]]:
+) -> tuple[list[QualityFinding], dict]:
     settings = dict(config.get("quality", {}))
-    findings: list[QualityFinding] = []
-    vertebra_rom = _span(curves["segmental"])
-    clamp_rom = _span(curves["clamp_segmental"])
-    ratio = vertebra_rom / clamp_rom if clamp_rom > 1e-12 else None
-    minimum_clamp = float(
-        settings.get(
-            "minimum_clamp_rom_rotation_deg"
-            if mode in ROTATION_MODES
-            else "minimum_clamp_rom_translation_mm",
-            0.5 if mode in ROTATION_MODES else 0.1,
-        )
-    )
-    unit = "°" if mode in ROTATION_MODES else "mm"
-
-    peak_gaps = _peak_data_gaps(
-        tracking.times_s,
-        curves,
-        settings,
-        strict=tracking.incomplete_samples > 0,
-    )
-    if peak_gaps:
-        affected = tuple(
-            dict.fromkeys(label for _start, _end, _missing, labels in peak_gaps for label in labels)
-        )
-        missing_total = sum(missing for _start, _end, missing, _labels in peak_gaps)
-        intervals = ", ".join(
-            f"{start:.3f}–{end:.3f} s" for start, end, _missing, _labels in peak_gaps[:3]
-        )
-        if len(peak_gaps) > 3:
-            intervals += f" and {len(peak_gaps) - 3} more"
-        findings.append(
-            QualityFinding(
-                "critical",
-                "peak_data_gap",
-                "MISSING DATA AT THE PEAK",
-                f"Data gap at {', '.join(affected)} ({intervals}); approximately "
-                f"{missing_total} samples missing. ROM peak unreliable – inspect or repeat.",
-            )
-        )
-
-    noisy_peaks = _peak_noise_findings(tracking.times_s, curves, settings)
-    for (
-        curve_label,
-        polarity,
-        start_time,
-        end_time,
-        peak_noise,
-        rest_noise,
-        noise_ratio,
-        rom_fraction,
-    ) in noisy_peaks:
-        findings.append(
-            QualityFinding(
-                "critical",
-                "peak_noise",
-                "EXCESSIVE NOISE AT THE PEAK",
-                f"{polarity.capitalize()} {curve_label} peak at {start_time:.3f}–"
-                f"{end_time:.3f} s: roughness {noise_ratio:.1f}× the rest of the curve "
-                f"({rom_fraction * 100:.1f}% of ROM). Marker unstable/slipped; peak "
-                "unreliable – inspect or repeat.",
-            )
-        )
-
-    if clamp_rom < minimum_clamp:
-        findings.append(
-            QualityFinding(
-                "critical",
-                "clamp_rom_too_small",
-                "Clamp motion too small",
-                f"Clamp ROM {clamp_rom:.2f} {unit}; minimum {minimum_clamp:.2f} {unit}. The ratio cannot be assessed reliably.",
-            )
-        )
-    elif ratio is not None:
-        over_limit = float(settings.get("vertebra_over_clamp_critical_ratio", 1.10))
-        under_warning = float(settings.get("vertebra_under_clamp_warning_ratio", 0.70))
-        under_critical = float(settings.get("vertebra_under_clamp_critical_ratio", 0.50))
-        if ratio > over_limit:
-            findings.append(
-                QualityFinding(
-                    "critical",
-                    "vertebra_exceeds_clamp",
-                    "Vertebral ROM exceeds clamp ROM",
-                    f"Vertebra {vertebra_rom:.2f} {unit}, clamp {clamp_rom:.2f} {unit} ({ratio * 100:.0f}%). Biomechanically implausible; inspect markers, coordinate system and tracking.",
-                )
-            )
-        elif ratio < under_critical:
-            findings.append(
-                QualityFinding(
-                    "critical",
-                    "severe_clamp_slip",
-                    "Severe motion loss at the vertebra",
-                    f"The vertebra reaches only {ratio * 100:.0f}% of clamp ROM. The clamp is probably holding poorly or slipping on the vertebra.",
-                )
-            )
-        elif ratio < under_warning:
-            findings.append(
-                QualityFinding(
-                    "warning",
-                    "possible_clamp_slip",
-                    "Possible poor clamp fixation",
-                    f"The vertebra reaches only {ratio * 100:.0f}% of clamp ROM. Inspect clamp seating and relative motion.",
-                )
-            )
-
+    raw, metrics = curve_quality.screen(tracking.times_s, curves, mode, settings)
+    findings = [QualityFinding(**item) for item in raw]
+    def add(level, code, title, detail, solution):
+        findings.append(QualityFinding(level, code, title, detail, solution))
+    metrics["invalid_input_rows"] = tracking.invalid_samples
+    if tracking.invalid_samples:
+        add("critical", "invalid_input_data", "Invalid acquisition records",
+            f"{tracking.invalid_samples} records contain invalid poses, timestamps or inconsistent frame times.",
+            "Check marker geometry, export precision and frame timestamps. Recover intact raw records or repeat the test.")
+    total = len(tracking.times_s) + tracking.incomplete_samples
+    fraction = tracking.incomplete_samples / max(total, 1)
+    metrics["incomplete_sample_fraction"] = fraction
+    if fraction > .05:
+        add("critical", "incomplete_marker_samples", "Too many incomplete five-marker frames",
+            f"{fraction:.1%} of frames lack usable poses for every required marker.",
+            "Restore all five markers, inspect fixation and visibility, then repeat the test.")
+    elif fraction > .02:
+        add("warning", "incomplete_marker_samples", "Borderline marker coverage",
+            f"{fraction:.1%} of frames are incomplete; verify that no extrema were missed.",
+            "Inspect missing intervals against the load curve; repeat if an extremum is unverified.")
+    elif fraction:
+        add("info", "minor_marker_loss", "Minor marker loss", f"{fraction:.1%} incomplete frames; gap impact is checked separately.",
+            "Keep markers visible. No repeat is requested from this percentage alone.")
+    errors = [pose.registration_error_mm for poses in tracking.poses.values() for pose in poses
+              if math.isfinite(pose.registration_error_mm)]
+    maximum = max(errors) if errors else None
+    metrics["maximum_registration_error_mm"] = maximum
+    if maximum is not None and maximum > float(settings.get("registration_warning_mm", 1.0)):
+        critical = maximum > float(settings.get("registration_critical_mm", 2.0))
+        add("critical" if critical else "warning", "registration_error", "Marker registration error",
+            f"Maximum marker fit error: {maximum:.2f} mm. This is not a calibrated ROM accuracy estimate.",
+            "Clean/check fiducials, verify marker geometry and camera visibility; repeat if the fit remains unstable.")
     if is_active_rom:
-        edge_fraction = float(settings.get("edge_peak_fraction", 0.03))
-        camera_edges = _edge_extrema(curves["segmental"], edge_fraction)
-        if camera_edges:
-            findings.append(
-                QualityFinding(
-                    "critical",
-                    "camera_peak_at_edge",
-                    "Atracsys peak may be truncated",
-                    ", ".join(camera_edges) + ". Inspect recording timing and the complete loading cycle.",
-                )
-            )
-        if zwick is not None:
-            zwick_edges = _edge_extrema(zwick.loads, edge_fraction)
-            if zwick_edges:
-                findings.append(
-                    QualityFinding(
-                        "critical",
-                        "zwick_peak_at_edge",
-                        "testXpert peak may be truncated",
-                        ", ".join(zwick_edges) + ". The load trace may not contain the complete peak.",
-                    )
-                )
-
-    if zwick is None and zwick_expected:
-        findings.append(
-            QualityFinding(
-                "critical",
-                "missing_zwick_data",
-                "testXpert data missing",
-                "The ROM analysis is incomplete without full load-displacement or moment-angle data.",
-            )
-        )
-    elif zwick is None:
-        findings.append(
-            QualityFinding(
-                "warning",
-                "camera_only_analysis",
-                "Retrospective Atracsys-only analysis",
-                "No .tra file was used; machine ROM and the moment/force curve cannot be compared.",
-            )
-        )
-
-    if zwick is not None and tracking.times_s and zwick.times_s:
-        camera_duration = tracking.times_s[-1]
-        zwick_duration = zwick.times_s[-1]
-        denominator = max(camera_duration, zwick_duration, 1e-9)
-        difference_fraction = abs(camera_duration - zwick_duration) / denominator
-        warning_limit = float(settings.get("duration_warning_fraction", 0.05))
-        critical_limit = float(settings.get("duration_critical_fraction", 0.10))
-        if difference_fraction > warning_limit:
-            severity = "critical" if difference_fraction > critical_limit else "warning"
-            findings.append(
-                QualityFinding(
-                    severity,
-                    "duration_mismatch",
-                    "Recording durations do not match",
-                    f"Atracsys {camera_duration:.2f} s, testXpert {zwick_duration:.2f} s; difference {difference_fraction * 100:.1f}%. Inspect start/stop timing and missing peaks.",
-                )
-            )
-
-    sample_total = len(tracking.times_s) + tracking.incomplete_samples
-    incomplete_fraction = (
-        tracking.incomplete_samples / sample_total if sample_total else 0.0
-    )
-    incomplete_warning = float(settings.get("incomplete_warning_fraction", 0.01))
-    incomplete_critical = float(settings.get("incomplete_critical_fraction", 0.05))
-    if incomplete_fraction > incomplete_warning:
-        severity = "critical" if incomplete_fraction > incomplete_critical else "warning"
-        findings.append(
-            QualityFinding(
-                severity,
-                "incomplete_marker_samples",
-                "Incomplete marker samples",
-                f"{tracking.incomplete_samples} samples ({incomplete_fraction * 100:.1f}%) do not contain all five markers.",
-            )
-        )
-
-    positive_steps = [
-        right - left
-        for left, right in zip(tracking.times_s, tracking.times_s[1:])
-        if right > left
-    ]
-    if positive_steps:
-        median_step = statistics.median(positive_steps)
-        maximum_step = max(positive_steps)
-        gap_limit = max(
-            float(settings.get("time_gap_absolute_s", 0.10)),
-            median_step * float(settings.get("time_gap_factor", 5.0)),
-        )
-        if maximum_step > gap_limit:
-            findings.append(
-                QualityFinding(
-                    "warning",
-                    "tracking_time_gap",
-                    "Time gap in Atracsys data",
-                    f"Largest gap {maximum_step:.3f} s with a typical interval of {median_step:.3f} s. Peaks may be incomplete.",
-                )
-            )
-
-    registration_values = [
-        pose.registration_error_mm
-        for poses in tracking.poses.values()
-        for pose in poses
-        if math.isfinite(pose.registration_error_mm)
-    ]
-    maximum_registration = max(registration_values) if registration_values else None
-    if maximum_registration is not None:
-        registration_warning = float(settings.get("registration_warning_mm", 1.0))
-        registration_critical = float(settings.get("registration_critical_mm", 2.0))
-        if maximum_registration > registration_warning:
-            severity = "critical" if maximum_registration > registration_critical else "warning"
-            findings.append(
-                QualityFinding(
-                    severity,
-                    "registration_error",
-                    "High marker registration error",
-                    f"Maximum registration error {maximum_registration:.2f} mm. Inspect marker recognition and visibility.",
-                )
-            )
-
-    metrics: dict[str, float | None] = {
-        "vertebra_rom": vertebra_rom,
-        "clamp_rom": clamp_rom,
-        "vertebra_to_clamp_ratio": ratio,
-        "incomplete_sample_fraction": incomplete_fraction,
-        "peak_data_gap_count": float(len(peak_gaps)),
-        "peak_noise_finding_count": float(len(noisy_peaks)),
-        "peak_noise_max_ratio": max(
-            (finding[6] for finding in noisy_peaks), default=None
-        ),
-        "peak_noise_max_rom_fraction": max(
-            (finding[7] for finding in noisy_peaks), default=None
-        ),
-        "maximum_registration_error_mm": maximum_registration,
-    }
+        edges = _edge_extrema(curves.get("segmental", ()), float(settings.get("edge_peak_fraction", .03)))
+        if edges:
+            add("critical", "camera_peak_at_edge", "A motion peak may be truncated", ", ".join(edges)+".",
+                "Start recording before loading; retain both extrema and the end of the cycle, then repeat.")
+    if zwick is None:
+        if zwick_expected:
+            add("critical", "missing_zwick_data", "Required load data are missing",
+                "Loading limits, duration and the complete load cycle cannot be verified.",
+                "Recover the matching .tra file and rerun. If unavailable, repeat the test with load export enabled.")
+        else:
+            add("info", "camera_only_analysis", "Camera-trace assessment only",
+                "Load limits and machine motion are not verified; approval applies only to the recorded camera trace.",
+                "For complete test approval, analyze the matching .tra file and verify the loading protocol.")
+    else:
+        finite = all(math.isfinite(v) for values in (zwick.times_s, zwick.loads, zwick.displacements) for v in values)
+        if not finite or len(zwick.loads)<10 or len(set(map(len,(zwick.times_s,zwick.loads,zwick.displacements))))!=1:
+            add("critical", "invalid_load_data", "Invalid load data", "Load arrays must contain aligned finite samples.",
+                "Check the testXpert export and units; recover the complete export or repeat the test.")
+        else:
+            if any(b<=a for a,b in zip(zwick.times_s,zwick.times_s[1:])):
+                add("critical", "invalid_load_time", "Load timestamps are not increasing", "Temporal alignment is ambiguous.",
+                    "Recover original ordered machine data or repeat with correct timestamps.")
+            camera_duration = tracking.times_s[-1]-tracking.times_s[0] if tracking.times_s else 0
+            machine_duration = zwick.times_s[-1]-zwick.times_s[0]
+            mismatch = abs(camera_duration-machine_duration)/max(camera_duration,machine_duration,1e-9)
+            metrics["duration_mismatch_fraction"] = mismatch
+            if mismatch>.10:
+                add("critical", "duration_mismatch", "Camera/load durations disagree", f"Duration difference: {mismatch:.1%}.",
+                    "Check file pairing, start/stop timing and dropped data. Recover matching traces or repeat the full test.")
+            elif mismatch>.07:
+                add("warning", "duration_mismatch", "Borderline recording alignment", f"Duration difference: {mismatch:.1%}.",
+                    "Confirm that both traces include the same complete loading cycle; repeat if not.")
+            if is_active_rom:
+                expected = config.get("load_limits",{}).get(mode,())
+                if len(expected)==2 and expected[0]<0<expected[1]:
+                    achieved = min(max(zwick.loads)/expected[1], min(zwick.loads)/expected[0])
+                    metrics["minimum_load_limit_fraction"] = achieved
+                    if achieved < .95:
+                        add("critical", "load_limit_not_reached", "Prescribed load limit was not reached",
+                            f"The less complete loading direction reached {achieved:.1%} of its configured target.",
+                            "Verify load units and limits, specimen safety and the complete export; repeat at the prescribed load.")
+                    elif achieved < .98:
+                        add("warning", "borderline_load_limit", "Load limit is marginally below target",
+                            f"The less complete direction reached {achieved:.1%} of target.",
+                            "Check the protocol tolerance and raw load trace; repeat if the target was not met.")
+                    overshoot = max(max(zwick.loads)/expected[1],min(zwick.loads)/expected[0])
+                    metrics["maximum_load_limit_fraction"] = overshoot
+                    if overshoot>1.10:
+                        add("critical", "load_limit_exceeded", "Load exceeds the prescribed limit",
+                            f"One loading direction reached {overshoot:.1%} of its target.",
+                            "Check the controller, units and protocol. Inspect specimen integrity before any repeat test.")
+                if _edge_extrema(zwick.loads,float(settings.get("edge_peak_fraction",.03))):
+                    add("critical", "zwick_peak_at_edge", "Load peak may be truncated", "A load extremum is at a recording boundary.",
+                        "Capture both load extrema and the complete cycle, then repeat the test.")
     return findings, metrics
 
 
@@ -1330,21 +1045,8 @@ def render_figure(
         "vertebra_caudal": f"Caudal vertebra ({markers['vertebra_caudal']})",
     }
     quality_settings = dict(config.get("quality", {}))
-    peak_gap_bands = [
-        (start, end, "CRITICAL: measurement data missing at the peak")
-        for start, end, _missing, _labels in _peak_data_gaps(
-            data.times_s,
-            curves,
-            quality_settings,
-            strict=data.incomplete_samples > 0,
-        )
-    ]
-    peak_noise_bands = [
-        (start, end, f"CRITICAL: excessive noise at the {polarity} {curve_label} peak")
-        for curve_label, polarity, start, end, _peak, _rest, _ratio, _fraction
-        in _peak_noise_findings(data.times_s, curves, quality_settings)
-    ]
-    camera_quality_bands = peak_gap_bands + peak_noise_bands
+    camera_quality_bands = [(start, end, finding.title)
+                            for finding in quality_findings for start, end in finding.intervals]
     first_series = [
         (labels[name], data.times_s, curves[name], colors[name])
         for name in ("clamp_up", "vertebra_cranial", "clamp_down", "vertebra_caudal")
@@ -1360,7 +1062,7 @@ def render_figure(
             finding.severity
             for finding in quality_findings
             if finding.code
-            in {"peak_data_gap", "peak_noise", "incomplete_marker_samples", "tracking_time_gap", "registration_error"}
+            in {"peak_data_gap", "rom_spike", "abrupt_motion", "unresolved_signal_to_noise", "nonmonotonic_time", "incomplete_marker_samples", "registration_error"}
         ),
         key=lambda value: severity_rank.get(value, 0),
         default=None,
@@ -1368,8 +1070,12 @@ def render_figure(
     comparison_findings = {
         "clamp_rom_too_small",
         "vertebra_exceeds_clamp",
-        "severe_clamp_slip",
-        "possible_clamp_slip",
+        "incoherent_motion",
+        "borderline_motion_transfer",
+        "excess_motion_transfer",
+        "unresolved_signal_to_noise",
+        "rom_spike",
+        "abrupt_motion",
         "camera_peak_at_edge",
         "peak_data_gap",
         "peak_noise",
@@ -1387,7 +1093,7 @@ def render_figure(
         (
             finding.severity
             for finding in quality_findings
-            if finding.code in {"zwick_peak_at_edge", "duration_mismatch"}
+            if finding.code in {"zwick_peak_at_edge", "duration_mismatch", "load_limit_not_reached", "borderline_load_limit", "invalid_load_time", "invalid_load_data"}
         ),
         key=lambda value: severity_rank.get(value, 0),
         default=None,
@@ -1444,29 +1150,31 @@ def render_figure(
         zwick_note = ""
     axis_text = ", ".join(f"{float(value):g}" for value in axis)
     warning_text = " | ".join(warnings[-2:]) if warnings else ""
-    if overall_severity == "critical":
-        banner_class = "quality-critical"
-        banner_text = "QUALITÄT: SCHLECHT / BAD – Messung und Hinweise vor der Auswertung prüfen"
-    elif overall_severity == "warning":
-        banner_class = "quality-warning"
-        banner_text = "QUALITÄT: MITTEL / MEDIUM – Klemmung, Messkurve und Hinweise prüfen"
-    else:
-        banner_class = "quality-ok"
-        banner_text = "QUALITÄT: GUT / GOOD – kein automatischer Qualitätsmangel erkannt"
+    banner_class = {"critical": "quality-critical", "warning": "quality-warning", "ok": "quality-ok"}[overall_severity]
+    banner_text = quality["label"] + (" — REPEAT TEST" if quality["repeat_required"] else "")
+    if not zwick_expected:
+        banner_text += " — CAMERA TRACE ONLY; LOAD NOT VERIFIED"
+    scope_text = ("Scope: camera trace only. Load limits are NOT verified."
+                  if not zwick_expected else "Scope: camera trace and available load data. Automated screening; confirm the configured protocol.")
+    ordered_findings = sorted(quality_findings, key=lambda item: {"critical":0,"warning":1,"info":2}[item.severity])
+    import textwrap
     quality_rows = []
-    for row_index, finding in enumerate(quality_findings[:5]):
-        row_class = "finding-critical" if finding.severity == "critical" else "finding-warning"
-        quality_rows.append(
-            f'<text x="95" y="{722 + row_index * 27}" class="{row_class}">'
-            f'{html.escape(finding.severity.upper())}: {html.escape(finding.title)} – {html.escape(finding.detail)}</text>'
-        )
-    if len(quality_findings) > 5:
-        quality_rows.append(
-            f'<text x="95" y="857" class="finding-warning">+ {len(quality_findings) - 5} additional findings in the JSON report</text>'
-        )
+    cursor = 752
+    for finding in ordered_findings:
+        row_class = {"critical":"finding-critical","warning":"finding-warning","info":"note"}[finding.severity]
+        for text in (f"{finding.severity.upper()}: {finding.title}. {finding.detail}",
+                     "SOLUTION: " + finding.solution):
+            for line in textwrap.wrap(text, width=185):
+                quality_rows.append(f'<text x="95" y="{cursor}" class="{row_class}">{html.escape(line)}</text>')
+                cursor += 23
+        cursor += 12
+    if not quality_rows:
+        quality_rows.append('<text x="95" y="752" class="note">No rejection or review criterion was triggered. Retain the raw data and verify the intended protocol.</text>')
+        cursor = 785
+    canvas_height = max(880, cursor + 45)
     quality_details = "\n".join(quality_rows)
     document = f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg id="rom-figure" xmlns="http://www.w3.org/2000/svg" width="1920" height="880" viewBox="0 0 1920 880">
+<svg id="rom-figure" xmlns="http://www.w3.org/2000/svg" width="1920" height="{canvas_height}" viewBox="0 0 1920 {canvas_height}">
   <style>
     .background {{ fill:#fff; }} .plot-bg {{ fill:#f8fafc; }}
     .frame {{ fill:none;stroke:#334155;stroke-width:1.3; }}
@@ -1475,23 +1183,23 @@ def render_figure(
     .grid {{ stroke:#cbd5e1;stroke-width:1;opacity:.65; }}
     .limit {{ stroke:#2563eb;stroke-width:1.5;stroke-dasharray:8 6; }}
     .peak-gap {{ fill:#ef4444;fill-opacity:.20;stroke:#dc2626;stroke-width:2;stroke-dasharray:6 4;vector-effect:non-scaling-stroke; }}
-    .title {{ font:700 28px Arial,sans-serif;fill:#0f172a; }}
-    .subtitle {{ font:16px Arial,sans-serif;fill:#475569; }}
-    .panel-title {{ font:700 17px Arial,sans-serif;fill:#0f172a; }}
-    .axis-label {{ font:15px Arial,sans-serif;fill:#1e293b; }}
-    .tick,.legend {{ font:12px Arial,sans-serif;fill:#475569; }}
-    .note {{ font:14px Arial,sans-serif;fill:#64748b; }}
-    .warning {{ font:13px Arial,sans-serif;fill:#9a3412; }}
-    .missing {{ font:700 18px Arial,sans-serif;fill:#64748b; }}
+    .title {{ font-family:Arial,sans-serif;font-size:28px;font-weight:700;fill:#0f172a; }}
+    .subtitle {{ font-family:Arial,sans-serif;font-size:16px;fill:#475569; }}
+    .panel-title {{ font-family:Arial,sans-serif;font-size:17px;font-weight:700;fill:#0f172a; }}
+    .axis-label {{ font-family:Arial,sans-serif;font-size:15px;fill:#1e293b; }}
+    .tick,.legend {{ font-family:Arial,sans-serif;font-size:12px;fill:#475569; }}
+    .note {{ font-family:Arial,sans-serif;font-size:14px;fill:#64748b; }}
+    .warning {{ font-family:Arial,sans-serif;font-size:13px;fill:#9a3412; }}
+    .missing {{ font-family:Arial,sans-serif;font-size:18px;font-weight:700;fill:#64748b; }}
     .quality-ok {{ fill:#dcfce7;stroke:#16a34a;stroke-width:2; }}
     .quality-warning {{ fill:#fef3c7;stroke:#f59e0b;stroke-width:3; }}
     .quality-critical {{ fill:#fee2e2;stroke:#dc2626;stroke-width:4; }}
-    .quality-text {{ font:700 19px Arial,sans-serif;fill:#0f172a; }}
-    .finding-warning {{ font:700 14px Arial,sans-serif;fill:#92400e; }}
-    .finding-critical {{ font:700 14px Arial,sans-serif;fill:#b91c1c; }}
-    .zoom-help {{ font:13px Arial,sans-serif;fill:#475569; }}
+    .quality-text {{ font-family:Arial,sans-serif;font-size:19px;font-weight:700;fill:#0f172a; }}
+    .finding-warning {{ font-family:Arial,sans-serif;font-size:14px;font-weight:700;fill:#92400e; }}
+    .finding-critical {{ font-family:Arial,sans-serif;font-size:14px;font-weight:700;fill:#b91c1c; }}
+    .zoom-help {{ font-family:Arial,sans-serif;font-size:13px;fill:#475569; }}
   </style>
-  <rect width="1920" height="880" class="background"/>
+  <rect width="1920" height="{canvas_height}" class="background"/>
   <text x="70" y="48" class="title">5-Marker ROM Analysis – {html.escape(mode)} – {html.escape(source_name)}</text>
   <text x="70" y="80" class="subtitle">Ref {markers['reference']}; Clamp {markers['clamp_up']}/{markers['clamp_down']}; Vertebra {markers['vertebra_cranial']}/{markers['vertebra_caudal']}; axis [{html.escape(axis_text)}]</text>
   <rect x="70" y="101" width="1780" height="55" rx="8" class="{banner_class}"/>
@@ -1501,12 +1209,13 @@ def render_figure(
   {third_plot}
   <text x="95" y="676" class="note">{html.escape(zwick_note)}</text>
   <text x="95" y="699" class="warning">{html.escape(warning_text)}</text>
+  <text x="95" y="724" class="note">{html.escape(scope_text)}</text>
   {quality_details}
-  <text x="1825" y="857" class="zoom-help" text-anchor="end">Zoom: mouse wheel · Pan: drag · Reset: double-click</text>
+  <text x="1825" y="{canvas_height-15}" class="zoom-help" text-anchor="end">Zoom: mouse wheel · Pan: drag · Reset: double-click</text>
   <script type="application/ecmascript"><![CDATA[
     (function () {{
       const svg = document.getElementById("rom-figure");
-      const original = {{x: 0, y: 0, width: 1920, height: 880}};
+      const original = {{x: 0, y: 0, width: 1920, height: {canvas_height}}};
       let view = {{...original}};
       let drag = null;
       function apply() {{
@@ -1595,6 +1304,27 @@ def write_motion_csv(
         )
 
 
+def write_unusable_report(input_path: Path, output_dir: Path, mode: str, error: Exception) -> None:
+    """No valid poses must produce an explicit result, never a blank success."""
+    import textwrap
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{input_path.stem}_{mode}_ROM"
+    figure = output_dir / (stem+"_figure.svg")
+    finding = QualityFinding("critical","invalid_input_data","No usable five-marker curve",
+        str(error),"Check all five marker IDs, visibility, geometry and the CSV export. Recover valid raw data or repeat the test.")
+    lines = ["Not approved — REPEAT TEST", finding.title, *textwrap.wrap(finding.detail,100),
+             *textwrap.wrap("SOLUTION: "+finding.solution,100)]
+    height = 65+35*len(lines)
+    texts="".join(f'<text x="30" y="{45+35*i}" font-size="{26 if i==0 else 17}">{html.escape(line)}</text>' for i,line in enumerate(lines))
+    svg=f'<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="{height}" style="font-family:Arial;fill:#991b1b"><rect width="100%" height="100%" fill="#fff1f2"/>{texts}</svg>'
+    figure.write_text(svg,encoding='utf-8')
+    figure.with_suffix('.html').write_text('<!doctype html><meta charset="utf-8"><title>Not approved – ROM quality</title>'+svg,encoding='utf-8')
+    report={"status":"ok","analysis":"five_marker_rom","input":str(input_path),"movement":mode,
+            "segmental_rom":None,"quality":{**quality_summary([finding]),"findings":[finding.__dict__]},
+            "outputs":{"figure_svg":str(figure),"figure_html":str(figure.with_suffix('.html'))}}
+    (output_dir/(stem+"_report.json")).write_text(json.dumps(report,indent=2),encoding='utf-8')
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     config, config_path = load_config(args.config)
@@ -1618,15 +1348,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     sign = float(config.get("sign", {}).get(mode, 1.0))
     baseline_seconds = float(config.get("baseline_seconds", 1.0))
-    tracking = load_tracking(input_path, marker_ids)
-    axis = movement_axis(config, mode, tracking.source_format)
-    curves, baseline_count = calculate_motion(
-        tracking, mode, axis, markers, baseline_seconds, sign
-    )
+    output_dir = args.output_dir.resolve() if args.output_dir else input_path.parent/f"{input_path.stem}_ROM_auswertung"
+    try:
+        tracking = load_tracking(input_path, marker_ids)
+        axis = movement_axis(config, mode, tracking.source_format)
+        curves, baseline_count = calculate_motion(tracking,mode,axis,markers,baseline_seconds,sign)
+    except (ValueError,OverflowError) as error:
+        write_unusable_report(input_path,output_dir,mode,error)
+        return 0
 
     zwick: RomZwickData | None = None
     metrics: RomMetrics | None = None
-    is_active_rom = zwick_path is not None and _has_token(zwick_path, "a")
+    is_active_rom = _has_token(input_path, "a") or (zwick_path is not None and _has_token(zwick_path, "a"))
     if zwick_path is not None:
         try:
             zwick = load_zwick(zwick_path, mode, config)
@@ -1726,6 +1459,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "testxpert_rom_files": [str(path.resolve()) for path in written_rom_files],
         "quality": {
             **quality_summary(quality_findings),
+            "approval_scope": "camera_trace_only" if args.ohne_zwick else "camera_and_load",
+            "full_test_approved": not args.ohne_zwick and quality_summary(quality_findings)["status"] == "ok",
             "metrics": quality_metrics,
             "findings": [
                 {
@@ -1733,6 +1468,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "code": finding.code,
                     "title": finding.title,
                     "detail": finding.detail,
+                    "solution": finding.solution,
+                    "intervals_s": list(finding.intervals),
                 }
                 for finding in quality_findings
             ],

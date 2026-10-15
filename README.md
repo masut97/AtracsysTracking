@@ -117,3 +117,11 @@ Die öffentliche Historie beginnt mit einer bereinigten Version. Frühere privat
 Historie, Diagnoseberichte und Rohdaten gehören nicht zu diesem Repository.
 Ein bestehender Entwicklungs-Checkout mit alter Historie muss neu geklont werden.
 Programm-Updates über den Update-Button benötigen keinen Git-Checkout.
+
+## Automatic ROM assessment
+
+English plots now display **Approved**, **Not approved — REPEAT TEST**, or
+**Check data and if needed repeat**, with a problem description and corrective
+action for each finding. Camera-only results explicitly exclude load approval.
+See [ROM quality rules and limitations](ROM_QUALITY.md) for the mathematical
+checks and their interpretation. Measurements and validation examples stay local.
