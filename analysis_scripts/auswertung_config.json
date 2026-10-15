@@ -1,0 +1,42 @@
+{
+  "markers": {
+    "reference": 299,
+    "cranial": 301,
+    "caudal": 302
+  },
+  "baseline_seconds": 1.0,
+  "default_movement": "FE",
+  "movement_axes": {
+    "FE": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "LB": [
+      1.0,
+      0.0,
+      0.0
+    ]
+  },
+  "angle_sign": {
+    "FE": 1.0,
+    "LB": 1.0
+  },
+  "registry_path": "Motion Tracking",
+  "zwick_file": "",
+  "zwick_search_directories": [],
+  "zwick_filename_patterns": [
+    "*.tra",
+    "*.csv",
+    "*.txt",
+    "*.tsv",
+    "*.asc"
+  ],
+  "zwick_max_age_seconds": 300.0,
+  "zwick_wait_seconds": 30.0,
+  "zwick_columns": {
+    "angle": "Standardwinkel Torsion",
+    "moment": "Standarddrehmoment Torsion"
+  },
+  "open_figure": true
+}

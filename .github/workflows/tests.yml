@@ -1,0 +1,37 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements-analysis.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest tests -q
+  publish-update:
+    needs: regression
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python tools/create_update.py --output dist/AtracsysTracking-update.zip
+      - name: Publish tested source update
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'update-' + '${{ github.sha }}'
+          gh release create $tag dist/AtracsysTracking-update.zip dist/AtracsysTracking-update.zip.sha256 --repo '${{ github.repository }}' --target '${{ github.sha }}' --title ('Geprueftes Update ' + '${{ github.sha }}'.Substring(0,12)) --notes 'Automatisch nach bestandenen Regressionstests. Nur eigener Code; lokale Messdaten und Kalibrierungen bleiben erhalten.' --latest

@@ -1,0 +1,146 @@
+Arbeitsplan: Software und Messdaten aufräumen
+Stand: 15.10.2026 – Planungsphase, noch keine Löschung oder Umstellung
+
+Ziel
+Eine nachvollziehbare, reproduzierbar gebaute Anwendung mit übersichtlichem
+eigenem Code, eindeutigem Startpfad, getrennten Daten und verlässlicher
+Fehlerbehandlung. Code wird nur gekürzt, wenn Verständlichkeit, Messqualität
+und Fehlerdiagnose erhalten bleiben. Kein Ziel ist eine minimale Zeilenzahl.
+
+Orchestrierung
+Hauptagent: Übersicht, Prioritäten, Abhängigkeiten, Sicherung, Zusammenführung
+und Abnahme. Nur der Hauptagent gibt Änderungen für Integration frei.
+Agent A / architecture_audit: Quellcode, Zuständigkeiten, Fehlerbehandlung,
+Installationsabgleich und Vorschläge für kleine Refactoring-Schritte.
+Agent B / data_audit: Dateibestand, Installationen, Startpfade, Datenherkunft,
+Duplikate und nachvollziehbare Bereinigung.
+Agent C / verification_audit: vorhandene Tests, Referenzmessungen,
+Regressionstests, Installationsprüfung und spätere Hardware-Testmatrix.
+
+Gegenseitige Kontrolle
+A prüft Bs Vorschläge auf Laufzeitabhängigkeiten.
+B prüft Cs Tests auf Schreibzugriffe und Schutz echter Messdaten.
+C prüft As Änderungen auf Verhaltensänderungen und Testlücken.
+Autor und Reviewer sind verschieden. Eine Änderung gilt erst nach Review und
+bestandener Prüfung als integriert. Streitpunkte entscheidet der Hauptagent
+anhand konkreter Daten; offene Risiken werden dokumentiert.
+Während der Bestandsaufnahme arbeiten alle Agents ausschließlich lesend.
+In der Umsetzung erhält jeder Agent eindeutig zugeordnete Dateien.
+Gemeinsam genutzte Schnittstellen und Konfiguration integriert der Hauptagent.
+
+Phase 1 – Ausgangslage und Sicherung
+1. Alle echten Installationspfade, Junctions, Desktop-Verknüpfungen und
+   Prozesspfade auflösen; Windows-AppData-Umleitung ausdrücklich prüfen.
+2. Referenzinstallation anhand Funktionen, Konfiguration und Nutzerstart
+   bestimmen, nicht anhand des neuesten Ordnerdatums.
+3. Unterschiede zwischen Quellordner und installierten Erweiterungen erfassen.
+4. Eigenen Code, Konfigurationen, Geometrien/Kalibrierung, Firmware und
+   Abhängigkeiten mit Herkunft und Prüfsummen inventarisieren.
+5. Sicherung und Wiederherstellbarkeit prüfen; ersten vollständigen Git-Stand
+   des eigenen Codes erzeugen, bevor Refactoring beginnt.
+Abnahme: bekannte Startkette, geprüfte Sicherung, nachvollziehbarer Quellstand.
+
+Bereits bestätigte Gründe für diese Reihenfolge
+- Git im Quellordner hat noch keine Commits; vorhandener Code ist untracked.
+- atracsys_sync/network.py im Quellordner ist leer; eine installierte Version
+  enthält dagegen eine Implementierung mit 5631 Bytes.
+- Documents/AtracsysMessskripte ist eine Junction, keine weitere unabhängige Kopie.
+- Desktop-Startziel und AppData-Zugang müssen einschließlich des Codex-
+  LocalCache-Pfads abgeglichen werden; bloßes Test-Path reicht nicht aus.
+- Installationen enthalten unterschiedliche Messfrequenzen, Registry-Pfade
+  und Auswertungseinstellungen. Diese dürfen nicht pauschal überschrieben werden.
+
+Phase 2 – Struktur festlegen und Ausgangsverhalten erfassen
+1. Einen Quellbestand, einen Build-Weg und eine produktive Installation festlegen.
+2. Eigene Module für Gerätezugriff, Aufnahmesteuerung, Dateispeicherung,
+   Auswertung und Oberfläche mit klaren Zuständigkeiten abgrenzen.
+3. Programm, Rohdaten, Ergebnisse, Konfiguration, Logs und Entwicklungsartefakte
+   trennen; bestehende Datenpfade kontrolliert übernehmen.
+4. Aktuelles Verhalten mit Offline-Tests und kleinen Referenzdatensätzen erfassen.
+Abnahme: reproduzierbarer Referenzlauf; keine funktionierende Verbesserung verloren.
+
+Phase 3 – Code in kleinen Paketen vereinfachen
+1. Duplizierte eigene Logik und veraltete Spezialskripte erst nach Vergleich
+   zusammenführen; Trochanter-Wiederholungen und Dateinamen sauber behandeln.
+2. Start-/Stopp-Zustände, Ressourcenfreigabe, Dateischluss und Metadatenabschluss
+   einschließlich Fehlerfall, Geräteverlust und mehrfacher Bedienung absichern.
+3. Pfadbehandlung, Konfigurationsprüfung und dauerhafte Fehlermeldungen bündeln.
+4. Messschleife und Darstellung unabhängig halten; keine neue Behauptung einer
+   exakten Hardware-Synchronität ohne Trigger.
+5. Installer und Paketierung aus dem konsolidierten Quellstand erzeugen.
+SDK, Hersteller-DLLs, Fremdbibliotheken und Firmware werden nicht zur bloßen
+Zeilenersparnis verändert. Hersteller-Netzwerkkonfiguration nicht umstellen.
+Abnahme pro Paket: getrenntes Review, passende Tests, kleiner nachvollziehbarer Diff.
+
+Phase 4 – Daten und Altbestände bereinigen
+1. Lösch-/Archivliste mit vollständigem Pfad, Größe, Grund und Abhängigkeiten
+   erstellen. Junctions nicht doppelt zählen oder rekursiv verfolgen.
+2. Zuerst regenerierbare Caches und temporäre eigene Build-/Testreste behandeln.
+3. Alte Installationen, ZIPs, Logs und doppelte Ergebnisse zunächst in ein
+   datiertes Archiv verschieben; Zuordnung und Rückweg protokollieren.
+4. Rohmessungen (CSV/JSON), Kalibrierungen/Geometrien, Firmware und einzige
+   vorhandene Codefassungen nicht als unnötig einstufen.
+5. Rohmessungen und endgültige Löschung von Archivbeständen bleiben eine
+   gesonderte, konkrete Nutzerentscheidung anhand der fertigen Liste.
+Abnahme: Anwendung und Referenzauswertung funktionieren ohne Archivzugriff;
+Dateimanifest bestätigt den Erhalt der Messdaten.
+
+Phase 5 – Integration und technische Abnahme
+- Start über Desktop, Explorer und Startskript führt zur gleichen Installation.
+- Offline-Installation ohne zusätzliche Downloads; SDK und Pakete vollständig.
+- Gemeinsam starten/stoppen, getrennte CSVs, gemeinsame Zeitbasis, tatsächliche
+  Datenraten und Software-Zeitversatz werden korrekt gespeichert.
+- JSON ist direkt nach Aufnahmeende vollständig; kein Warten auf nächste Aufnahme.
+- Fehler bleiben lesbar; fehlende Kamera/Loadcell werden korrekt angezeigt.
+- Markerstatus bleibt bei jedem Tab sichtbar.
+- Trochanter-Auswertung: korrektes Routing, Wiederholungen, abweichende Dateinamen,
+  Datenlücken, keine aktiven Zyklen und kollisionsfreie Ergebnisordner prüfen.
+- Sauberer Neustart nach Fehler und Abbruch; keine verwaisten Messprozesse.
+Abnahme: konsolidierte Version, Prüfergebnis und Rückfallversion sind vorhanden.
+
+Phase 6 – Gemeinsamer Praxistest und Bugfix-Liste
+Nach technischer Abnahme gemeinsam mit dem Nutzer ausgiebig mit FTK500 und
+ESP32/NAU7802 testen: kurze und lange Aufnahmen, Frequenzen, Verbindungsverlust,
+erneuter Start, Auswertung und Bedienung. Hardwarezugriffe und Aufnahmen sind
+bewusste Tests, keine Nebenwirkung des Aufräumens.
+Nutzer-Bugliste priorisieren: Datenverlust/Absturz vor falschen Ergebnissen,
+dann Bedienung/Darstellung. Jeder bestätigte Fehler erhält Reproduktion,
+gezielten Fix, unabhängiges Review und passenden Regressionstest.
+
+Lieferumfang
+Bestands-/Bereinigungsmanifest, gesicherter Quellstand, konsolidierter Code,
+eindeutige lokale Installation und Startzugang, reproduzierbares Paket,
+Testprotokoll, Rückfallstand und Liste offener Punkte.
+
+Ergebnis der drei Agent-Prüfungen und des gegenseitigen Reviews
+Alle drei Bestandsaufnahmen sind abgeschlossen. Es wurden keine Tests
+ausgeführt, Programme gestartet oder produktiven Dateien geändert.
+Die Agents haben ihre Befunde untereinander abgeglichen.
+
+Konkrete Aufgaben für die anschließende Umsetzung, in Abhängigkeiten geordnet:
+P0 / Hauptagent mit A und B: Ursprung und vollständigen Quellstand klären,
+  insbesondere leere network.py, aufgelöste Startpfade, unterschiedliche
+  Registry-Pfade, 20/100-Hz-Einstellungen und ausgewählte Auswertung sichern.
+P1 / C, Review A/B: bestehende Tests in isolierter Installation als Baseline
+  durchführen. Vorhanden: 18 Testfunktionen und paketierter Qt-Mock-Selbsttest.
+  Achtung: Selbsttest ändert Konfiguration vorübergehend, daher nur in Testkopie.
+P2 / A, Review C: private Tracker-Methoden und UI-Annahmen hinter einem
+  Versionsadapter bündeln; Aufnahmezustand aus panel.py in einen Controller
+  lösen. Bedeutung der verwendeten Zeitstempel unverändert erhalten.
+P3 / A, Review C/B: Teilfehler beim Öffnen mehrerer Ausgaben abfangen,
+  Abschlussstatus erst nach Dateischluss veröffentlichen; Doppelstart,
+  Vorbereitungsabbruch, Geräteausfall, keine Marker und Pufferüberlauf prüfen.
+P4 / A, Review C: generische Messskriptanzeige statt fest vorausgesetzter
+  force_N-/sensor_raw-Spalten; Fehlerdiagnose erhalten.
+P5 / A, Review C/B: Trochanter-Breit-/Langformat, tatsächliche Dateinamen und
+  Wiederholungen absichern; keine künstlichen Zyklen aus Datenlücken.
+P6 / Hauptagent/A, Review B/C: komplettes Paket temporär erzeugen und prüfen,
+  erst danach veröffentlichen. Bestehende Nutzerskripte nicht blind überschreiben.
+  Installer darf den aktiven Auto-/Trochanter-Dispatcher nicht auf auswertung.py
+  zurücksetzen. Manifest nach allen Änderungen aktualisieren und prüfen.
+P7 / B, Review A/C: belegte Bereinigungsliste umsetzen, erst nachdem das
+  reproduzierbare Paket ohne USB und Archivabhängigkeiten bestanden hat.
+
+Keine parallelen Änderungen an derselben Datei. P2 bis P6 werden in kleinen
+Schritten integriert; automatisierte Tests laufen nach jedem betroffenen Paket.
+Große Hardware-/Dauertests erfolgen nach der konsolidierten Software-Abnahme.
