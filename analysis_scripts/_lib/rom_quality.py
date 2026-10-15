@@ -117,10 +117,10 @@ def screen(times, curves, mode, settings):
                    median_sampling_hz=1/dt)
     minimum_clamp = float(settings.get("minimum_clamp_rom_rotation_deg" if mode in {"FE","LB","AR"}
                                         else "minimum_clamp_rom_translation_mm", .5 if mode in {"FE","LB","AR"} else .1))
-    if clamp_span < minimum_clamp:
-        add("critical", "clamp_rom_too_small", "Insufficient applied motion",
-            f"Clamp ROM is {clamp_span:.4g}; the configured minimum is {minimum_clamp:.4g}.",
-            "Check actuator movement, selected direction and marker IDs; apply the intended loading cycle and repeat.")
+    if clamp_span < 1e-12:
+        add("critical", "clamp_rom_too_small", "Fixture motion is unresolved",
+            "The clamp curve is constant; applied motion cannot be verified from this trace.",
+            "Check fresh marker poses, direction, export precision and the load trace. Verify resolution before repeating.")
     if segment_span < 1e-12:
         add("critical", "unresolved_motion", "Segment motion is unresolved",
             "The segment curve is constant; a ROM measurement cannot be distinguished from frozen or rounded data.",

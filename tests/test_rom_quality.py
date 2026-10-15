@@ -110,6 +110,15 @@ def test_expected_load_limits_pass_and_scope_is_not_downgraded(rom):
     assert rom.quality_summary(findings)['label']=='Approved'
 
 
+def test_very_stiff_construct_is_not_rejected_for_small_but_resolved_motion(rom):
+    from dataclasses import replace
+    data,curves,machine=fixture(rom)
+    curves={key:tuple(.001*v for v in values) for key,values in curves.items()}
+    machine=replace(machine,loads=tuple(1.5*v for v in machine.loads))
+    findings,_=rom.evaluate_quality(data,curves,'FE',machine,True,rom.DEFAULT_CONFIG)
+    assert rom.quality_summary(findings)['label']=='Approved'
+
+
 def test_plot_contains_all_english_problems_and_solutions_without_clipping(rom,tmp_path):
     data,curves,_=fixture(rom)
     for key in ('clamp_up','clamp_down','vertebra_cranial','vertebra_caudal'):curves[key]=curves['segmental']
