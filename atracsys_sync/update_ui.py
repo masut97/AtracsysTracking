@@ -150,6 +150,10 @@ class UpdateController:
         panel = self.window.script_panel
         if self.busy():
             return
+        free = getattr(self.window, 'free_analysis_controller', None)
+        if free is not None and free.busy():
+            QMessageBox.information(self.window, 'Update', 'Bitte die freie Zuordnung/Auswertung zuerst abschließen.')
+            return
         if panel.testing or panel.pending is not None or (panel.group is not None and panel.group.recording) or self.window.recorder.stats().state != "Gestoppt":
             QMessageBox.information(self.window, "Update", "Bitte zuerst die laufende Aufnahme oder Vorbereitung beenden.")
             return

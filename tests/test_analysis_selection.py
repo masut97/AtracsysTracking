@@ -8,7 +8,7 @@ def scripts(directory):
         (directory / name).touch()
 
 
-def test_normal_selection_only_exposes_three_main_analyses(tmp_path):
+def test_normal_selection_only_exposes_primary_analyses(tmp_path):
     scripts(tmp_path)
     assert [p.name for _, p in entries(tmp_path)] == [name for name, _ in PRIMARY]
 
@@ -24,7 +24,7 @@ def test_selected_special_or_imported_script_remains_selected_when_collapsed(tmp
     for name in ('custom.py', SPECIAL[1][0], 'rom_csv_nachauswertung.py'):
         paths = {p for _, p in entries(tmp_path, tmp_path/name)}
         assert (tmp_path/name).resolve() in paths
-        assert len(paths) == 4
+        assert len(paths) == len(PRIMARY)+1
 
 
 def test_missing_entry_and_outside_selection_are_not_invented(tmp_path):

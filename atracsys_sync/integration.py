@@ -132,6 +132,10 @@ def install():
         self.setWindowTitle(self.windowTitle() + " · Messskripte")
 
     def start_window(self, *args, **kwargs):
+        free = getattr(self, 'free_analysis_controller', None)
+        if free is not None and free.busy():
+            self._set_recording_message('Bitte die freie Zuordnung/Auswertung zuerst abschließen.', 'ready')
+            return
         updater = getattr(self, "update_controller", None)
         if updater is not None and updater.busy():
             self._set_recording_message("Bitte das laufende Update abwarten.", "ready")
@@ -153,6 +157,11 @@ def install():
         return result
 
     def close_window(self, event):
+        free = getattr(self, 'free_analysis_controller', None)
+        if free is not None and free.busy():
+            self._set_recording_message('Freie Auswertung läuft. Bitte vor dem Schließen den Abschluss abwarten.', 'ready')
+            event.ignore()
+            return
         updater = getattr(self, "update_controller", None)
         if updater is not None and updater.busy():
             updater.status.setText("Update läuft. Bitte vor dem Schließen den Abschluss abwarten.")

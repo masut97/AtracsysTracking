@@ -60,8 +60,8 @@ def run(output: Path):
         combo = self.analysis_combo
         selected_analysis = combo.currentData()
         base_choices = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
-        assert {'auto_auswertung.py', 'rom_auswertung.py', 'trochanter_auswertung.py'} <= base_choices
-        assert len(base_choices) <= 4, base_choices
+        assert {'auto_auswertung.py', 'rom_auswertung.py', 'trochanter_auswertung.py', 'free_auswertung.py'} <= base_choices
+        assert len(base_choices) <= 5, base_choices
         profiles.setChecked(True)
         expanded = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
         assert {'Auswertung_299_331_332.py', 'Auswertung_299_331_333.py', 'Auswertung_340_341_342.py'} <= expanded
@@ -70,6 +70,36 @@ def run(output: Path):
         profiles.setChecked(False)
         assert combo.currentData() == selected_analysis
         assert {Path(combo.itemData(i)).name for i in range(1, combo.count())} == base_choices
+        from .free_analysis_ui import ProfileDialog, backend, save_profile
+        from PySide6.QtGui import QCloseEvent
+        assert self.findChild(QPushButton, 'freeAnalysisSetupButton') is not None
+        assert self.findChild(QPushButton, 'freeAnalysisCsvButton') is not None
+        sample_profile = dict(version=1, name='General profile test', reference=101, baseline_seconds=0,
+            markers={'101':'Reference', '102':'Object A', '103':'Object B', '104':'Object C'},
+            comparisons=[dict(name='B relative to A', anchor=102, target=103, outputs=['tx','rotation_axis'], axis=[0,0,1]),
+                         dict(name='C relative to reference', anchor=101, target=104, outputs=['path'], axis=[1,0,0])])
+        editor = ProfileDialog(root, sample_profile, self)
+        assert editor.value() == backend(root).validate_profile(sample_profile)
+        stored = output/'test_free_profile.json'
+        save_profile(stored, editor.value(), backend(root).validate_profile)
+        assert backend(root).load_profile(stored) == editor.value()
+        editor.deleteLater()
+        controller = self.free_analysis_controller
+        original_start = self.script_panel.start_recording
+        calls = []
+        self.script_panel.start_recording = lambda *_a, **_k: calls.append(True)
+        try:
+            controller.editing = True
+            self._start_recording('ui')
+            assert not calls, 'Recording started during profile editing'
+            close = QCloseEvent(); self.closeEvent(close)
+            assert not close.isAccepted(), 'Window closed during free-analysis activity'
+            controller.editing = False
+            self._start_recording('ui')
+            assert calls == [True]
+        finally:
+            controller.editing = False
+            self.script_panel.start_recording = original_start
         assert not self.workspace_tabs.isAncestorOf(self.marker_scroll)
         assert self.marker_scroll.parentWidget() is self.marker_status_footer
 
@@ -217,6 +247,7 @@ def run(output: Path):
                   "recording_cycles": len(completed_cycles), "json_final_immediately_after_stop": True,
                   "marker_footer_visible_in_all_tabs": True,
                   "curated_analysis_selection_and_profile_toggle": True,
+                  "free_profile_editor_save_and_activity_guards": True,
                   "source_processes_stopped": all(s.process.poll() is not None for s in windows[0].script_panel.group.sources)}
         (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         return result

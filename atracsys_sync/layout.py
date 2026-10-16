@@ -184,6 +184,10 @@ class _RetrospectiveController(QObject):
         return str(selected) if accepted else None
 
     def start(self, paths):
+        free = getattr(self.window, 'free_analysis_controller', None)
+        if free is not None and free.busy():
+            QMessageBox.information(self.window, 'Auswertung läuft', 'Bitte die freie Zuordnung/Auswertung zuerst abschließen.')
+            return
         if self.worker is not None and self.worker.isRunning():
             QMessageBox.information(
                 self.window,

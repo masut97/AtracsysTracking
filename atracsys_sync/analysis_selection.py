@@ -6,6 +6,7 @@ PRIMARY = (
     ('auto_auswertung.py', 'Automatisch erkennen (empfohlen)'),
     ('rom_auswertung.py', 'ROM – fünf Marker'),
     ('trochanter_auswertung.py', 'Trochanter – Belastungsversuch'),
+    ('free_auswertung.py', 'Freie Marker-Auswertung'),
 )
 SPECIAL = (
     ('auswertung.py', 'Monotest – drei Marker'),
@@ -57,13 +58,17 @@ def populate(window, selected=None):
 
 
 def add_profile_toggle(window, layout):
-    from PySide6.QtWidgets import QCheckBox, QLabel
+    from PySide6.QtWidgets import QCheckBox, QLabel, QHBoxLayout
     toggle = QCheckBox('Weitere Profile und eigene Skripte anzeigen', window)
     toggle.setObjectName('analysisProfilesToggle')
     toggle.setToolTip('Monotest und Markerprüfungen. Eine bestehende Auswahl bleibt auch bei eingeklappter Liste erhalten.')
     window.analysis_profiles_toggle = toggle
     toggle.toggled.connect(lambda _checked: populate(window, window.analysis_combo.currentData()))
-    layout.addWidget(toggle)
+    row = QHBoxLayout()
+    row.addWidget(toggle); row.addStretch(1)
+    from .free_analysis_ui import FreeAnalysisController
+    window.free_analysis_controller = FreeAnalysisController(window, row)
+    layout.addLayout(row)
     hint = QLabel('Automatisch erkennt ROM, Trochanter und Monotest anhand der Marker. '
                   'Historische ROM-Dateien können unten separat nachausgewertet werden.', window)
     hint.setObjectName('mutedLabel')

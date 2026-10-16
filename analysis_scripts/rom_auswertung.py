@@ -1016,6 +1016,7 @@ def _svg_multi_plot(
     alert_level: str | None = None,
     vertical_bands: Sequence[tuple[float, float, str]] = (),
     split_gap_factor: float | None = None,
+    dashed_labels: Sequence[str] = (),
 ) -> str:
     left, top, width, height = box
     x_values = [value for _, xs, _, _ in series for value in xs if math.isfinite(value)]
@@ -1031,7 +1032,7 @@ def _svg_multi_plot(
         return top + height - (value - y_min) / (y_max - y_min) * height
 
     parts = [
-        f'<text x="{left:.1f}" y="{top - 58:.1f}" class="panel-title">{html.escape(title)}</text>',
+        f'<text x="{left:.1f}" y="{top - 58 - 22*((len(series)-1)//2):.1f}" class="panel-title">{html.escape(title)}</text>',
         f'<rect x="{left:.1f}" y="{top:.1f}" width="{width:.1f}" height="{height:.1f}" class="plot-bg"/>',
     ]
     for tick in x_ticks:
@@ -1061,7 +1062,7 @@ def _svg_multi_plot(
     parts.append(f'<rect x="{left:.1f}" y="{top:.1f}" width="{width:.1f}" height="{height:.1f}" class="{frame_class}" vector-effect="non-scaling-stroke"/>')
 
     # Draw dashed fixture traces last so coincident bone/fixture curves remain visible.
-    for label, xs, ys, color in sorted(series,key=lambda item:item[0].lower().startswith('clamp')):
+    for label, xs, ys, color in sorted(series,key=lambda item:item[0].lower().startswith('clamp') or item[0] in dashed_labels):
         points = [
             (index, x, y)
             for index, (x, y) in enumerate(zip(xs, ys))
@@ -1113,16 +1114,16 @@ def _svg_multi_plot(
                 ) else "L"
                 commands.append(f"{command} {sx(x):.2f} {sy(y):.2f}")
                 previous_index = original_index
-            dash = ' stroke-dasharray="10 6"' if label.lower().startswith("clamp") else ""
+            dash = ' stroke-dasharray="10 6"' if label.lower().startswith("clamp") or label in dashed_labels else ""
             parts.append(f'<path class="data-line" d="{" ".join(commands)}" fill="none" stroke="{color}" stroke-width="2" vector-effect="non-scaling-stroke"{dash}/>')
     legend_x = left + 10
-    legend_y = top - 20
+    legend_y = top - 20 - 22*((len(series)-1)//2)
     for index, (label, _, _, color) in enumerate(series):
         row = index // 2
         column = index % 2
         x = legend_x + column * (width / 2)
         y = legend_y + row * 22
-        dash = ' stroke-dasharray="8 4"' if label.lower().startswith("clamp") else ""
+        dash = ' stroke-dasharray="8 4"' if label.lower().startswith("clamp") or label in dashed_labels else ""
         parts.append(f'<line x1="{x:.1f}" y1="{y:.1f}" x2="{x + 24:.1f}" y2="{y:.1f}" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke"{dash}/>')
         parts.append(f'<text x="{x + 31:.1f}" y="{y + 4:.1f}" class="legend">{html.escape(label)}</text>')
     parts.append(f'<text x="{left + width / 2:.1f}" y="{top + height + 55:.1f}" class="axis-label" text-anchor="middle">{html.escape(x_label)}</text>')

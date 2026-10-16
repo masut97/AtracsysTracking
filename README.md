@@ -21,7 +21,8 @@ prÃ¼ft die unverÃ¤nderten eingebetteten Module der Basisanwendung.
 
 ## Auswahl der Auswertung
 
-Die normale Liste bietet **Automatisch erkennen**, **ROM** und **Trochanter**.
+Die normale Liste bietet **Automatisch erkennen**, **ROM**, **Trochanter** und
+**Freie Marker-Auswertung**.
 Die Automatik unterscheidet ROM, Trochanter und den Drei-Marker-Monotest anhand
 der Marker. Mit **Weitere Profile und eigene Skripte anzeigen** werden die
 direkte Monotest-Auswertung, die drei speziellen Markerprüfungen und zusätzliche
@@ -31,6 +32,11 @@ bei eingeklappter Liste sichtbar und ausgewählt.
 Hilfsbibliotheken werden nicht als Auswertung angeboten. Die historische
 ROM-Nachauswertung bleibt im eigenen CSV-Bereich verfügbar. Die Bereinigung
 ändert nur die Auswahl; Bibliotheken, Messdaten und Kalibrierungen bleiben erhalten.
+
+Mit **Freie Zuordnung …** werden Marker frei benannt, ein Referenzmarker und
+beliebige Vergleichspaare gewählt. Das gespeicherte Profil kann nach Aufnahmen
+automatisch laufen oder mit **CSV frei auswerten …** auf vorhandene aktuelle
+Aufnahmen angewendet werden. Details: [Freie Marker-Auswertung](FREE_ANALYSIS.md).
 
 ## Entwicklung und Tests
 
