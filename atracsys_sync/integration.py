@@ -8,6 +8,7 @@ def install():
     from atracsys_tracker import recording
     from atracsys_tracker.ui.main_window import MainWindow
     from .layout import organize_window
+    from .analysis_selection import populate
     from .panel import ScriptPanel
     from .adapter import validate_tracker_contract
     from atracsys_tracker.adapters.native_bridge import NativeBridgeAdapter
@@ -173,5 +174,6 @@ def install():
     MainWindow._refresh_recording_status = refresh_window
     MainWindow.closeEvent = close_window
     MainWindow._maybe_launch_analysis = maybe_analyze
+    MainWindow._populate_analysis_scripts = populate
     AcquisitionWorker._new_adapter = guarded_adapter
     NativeBridgeAdapter.connect = connect_bridge

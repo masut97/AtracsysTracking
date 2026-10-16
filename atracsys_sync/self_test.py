@@ -54,6 +54,22 @@ def run(output: Path):
         assert measurement_menu is not None and measurement_menu.menu() is not None
         assert workspace_menu is not None and len(workspace_menu.menu().actions()) == 2
         assert self.findChild(QPushButton, "softwareUpdateButton") is not None
+        from PySide6.QtWidgets import QCheckBox
+        profiles = self.findChild(QCheckBox, "analysisProfilesToggle")
+        assert profiles is not None and not profiles.isChecked()
+        combo = self.analysis_combo
+        selected_analysis = combo.currentData()
+        base_choices = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
+        assert {'auto_auswertung.py', 'rom_auswertung.py', 'trochanter_auswertung.py'} <= base_choices
+        assert len(base_choices) <= 4, base_choices
+        profiles.setChecked(True)
+        expanded = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
+        assert {'Auswertung_299_331_332.py', 'Auswertung_299_331_333.py', 'Auswertung_340_341_342.py'} <= expanded
+        assert not any(name.endswith('_core.py') for name in expanded)
+        assert combo.currentData() == selected_analysis
+        profiles.setChecked(False)
+        assert combo.currentData() == selected_analysis
+        assert {Path(combo.itemData(i)).name for i in range(1, combo.count())} == base_choices
         assert not self.workspace_tabs.isAncestorOf(self.marker_scroll)
         assert self.marker_scroll.parentWidget() is self.marker_status_footer
 
@@ -200,6 +216,7 @@ def run(output: Path):
                   "exact_reference_timestamps": True, "hardware_synchronized": False,
                   "recording_cycles": len(completed_cycles), "json_final_immediately_after_stop": True,
                   "marker_footer_visible_in_all_tabs": True,
+                  "curated_analysis_selection_and_profile_toggle": True,
                   "source_processes_stopped": all(s.process.poll() is not None for s in windows[0].script_panel.group.sources)}
         (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         return result

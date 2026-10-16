@@ -19,6 +19,19 @@ Laufzeitbibliotheken werden aus einer vorhandenen, berechtigt genutzten
 Installation Ã¼bernommen. Sie werden nicht in Git gespeichert. Der Builder
 prÃ¼ft die unverÃ¤nderten eingebetteten Module der Basisanwendung.
 
+## Auswahl der Auswertung
+
+Die normale Liste bietet **Automatisch erkennen**, **ROM** und **Trochanter**.
+Die Automatik unterscheidet ROM, Trochanter und den Drei-Marker-Monotest anhand
+der Marker. Mit **Weitere Profile und eigene Skripte anzeigen** werden die
+direkte Monotest-Auswertung, die drei speziellen Markerprüfungen und zusätzliche
+lokale Skripte eingeblendet. Eine bereits aktive Spezialauswertung bleibt auch
+bei eingeklappter Liste sichtbar und ausgewählt.
+
+Hilfsbibliotheken werden nicht als Auswertung angeboten. Die historische
+ROM-Nachauswertung bleibt im eigenen CSV-Bereich verfügbar. Die Bereinigung
+ändert nur die Auswahl; Bibliotheken, Messdaten und Kalibrierungen bleiben erhalten.
+
 ## Entwicklung und Tests
 
 Windows x64, Python **3.11** und Git werden fÃ¼r die Entwicklung benÃ¶tigt.

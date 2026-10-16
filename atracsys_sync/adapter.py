@@ -12,6 +12,7 @@ def validate_tracker_contract(recording, window_class, bridge_class=None):
         (window_class, {name: set() for name in (
             "__init__", "_start_recording", "_toggle_recording",
             "_refresh_recording_status", "closeEvent",
+            "_populate_analysis_scripts", "_configured_analysis_script",
         )}),
     ]
     if bridge_class is not None:

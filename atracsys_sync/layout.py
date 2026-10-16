@@ -372,6 +372,8 @@ def organize_window(window, panel):
     if record_layout.count() > 1 and record_layout.itemAt(1).layout() is not None:
         analysis_options = record_layout.takeAt(1).layout()
         group_layout.addLayout(analysis_options)
+    from .analysis_selection import add_profile_toggle
+    add_profile_toggle(window, group_layout)
     analysis_layout.addWidget(analysis_group)
 
     retrospective_group = QGroupBox("RECALCULATE HISTORICAL ROM FILES", analysis_page)

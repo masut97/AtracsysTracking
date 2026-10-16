@@ -97,6 +97,8 @@ def test_incompatible_tracker_contract_fails_before_any_hook_is_applied():
         def _start_recording(self): pass
         def _toggle_recording(self): pass
         def _refresh_recording_status(self): pass
+        def _populate_analysis_scripts(self, selected=None): pass
+        def _configured_analysis_script(self): pass
         def closeEvent(self): pass
     recording = SimpleNamespace(RecordingWorker=Worker, CSV_COLUMNS=[])
     original = Worker.enqueue
