@@ -10,6 +10,27 @@ pytestmark = pytest.mark.skipif(os.name != 'nt', reason='Windows registry bridge
 SCRIPT = Path(__file__).resolve().parents[1] / 'tools/zwick_bridge.ps1'
 
 
+def test_prepare_ready_camera_does_not_change_recording_commands(tmp_path):
+    import time
+    import winreg
+    name='Software\\AtracsysTracking\\BridgeTest_'+uuid.uuid4().hex
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,name) as key:
+        for field,value,kind in [('AppReady',1,winreg.REG_DWORD),
+                ('CameraReady',1,winreg.REG_DWORD),
+                ('HeartbeatUnixMs',int((time.time()+60)*1000),winreg.REG_QWORD),
+                ('RecordingState','Gespeichert',winreg.REG_SZ),
+                ('StartRecord',0,winreg.REG_DWORD),('StopRecord',0,winreg.REG_DWORD)]:
+            winreg.SetValueEx(key,field,0,kind,value)
+    try:
+        assert invoke(tmp_path,'Prepare','-ControlPath','HKCU:\\'+name).returncode==0
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,name) as key:
+            assert winreg.QueryValueEx(key,'StartRecord')[0]==0
+            assert winreg.QueryValueEx(key,'StopRecord')[0]==0
+        assert not (tmp_path/'ZwickCoupling/session.json').exists()
+    finally:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER,name)
+
+
 def invoke(root, action, *extra):
     return subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass',
         '-File',str(SCRIPT),'-Action',action,'-Root',str(root),*extra],
