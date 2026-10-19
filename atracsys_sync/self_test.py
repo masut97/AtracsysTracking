@@ -175,6 +175,17 @@ def run(output: Path):
                     second_manifest = json.loads((output / (second_name + ".scripts.json")).read_text(encoding="utf-8"))
                     assert second_manifest["state"] == "complete"
                     completed_cycles.append(second_name)
+                    # Cancelling a new preparation must not claim that the
+                    # preceding measurement is the newly saved test.
+                    from .external_control import reported_state
+                    cancelled_name=recording_name+'_cancelled'
+                    self.record_name_edit.setText(cancelled_name)
+                    self._start_recording('ui')
+                    assert self.script_panel.pending is not None
+                    self.zwick_controller.stop()
+                    assert self.script_panel.pending is None
+                    assert reported_state(self.recorder.stats(),False,self.zwick_controller.cancelled)=='Gestoppt'
+                    assert not (output/(cancelled_name+'.csv')).exists()
                     self.close()
                 elif time.monotonic() >= second_deadline:
                     errors.append("Zweite Aufnahme wurde nicht rechtzeitig bereit: " + json.dumps(recording_diagnostics(), ensure_ascii=False))
@@ -303,6 +314,7 @@ def run(output: Path):
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,
+                  "cancelled_preparation_not_reported_as_saved": True,
                   "source_processes_stopped": all(s.process.poll() is not None for s in windows[0].script_panel.group.sources)}
         (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         return result
