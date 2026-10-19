@@ -149,6 +149,7 @@ class RegistryControl:
         if not self.enabled:
             return
         self._last_error = ''
+        self.write_app_ready(True)
         r=self.registry
         for name,value,kind in (('RecordingState',state,r.REG_SZ),('LastError',last_error,r.REG_SZ),
                 ('HeartbeatUnixMs',int(time.time()*1000),r.REG_QWORD)):

@@ -95,6 +95,9 @@ class ZwickController(QObject):
         w.stop_record_button=QPushButton('Aufnahme stoppen',bar)
         w.stop_record_button.setObjectName('stopRecordingButton')
         w.stop_record_button.clicked.connect(self.stop)
+        disabled='QPushButton:disabled { background:#182232; color:#74859a; border:1px solid #27364a; }'
+        w.record_button.setStyleSheet('QPushButton { background:#245b93; color:white; border:1px solid #4481ba; padding:8px 14px; border-radius:7px; } '+disabled)
+        w.stop_record_button.setStyleSheet('QPushButton { background:#94283d; color:white; border:1px solid #c04d62; padding:8px 14px; border-radius:7px; } '+disabled)
         spin=w.record_frequency_spin
         spin.setKeyboardTracking(False); spin.setSuffix(' Hz'); spin.setMinimumWidth(95)
         spin.lineEdit().setReadOnly(False)

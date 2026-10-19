@@ -247,6 +247,7 @@ def run(output: Path):
             memory.data.update(RecordingName=(recording_name,memory.REG_SZ),
                 RecordingDirectory=(str(output),memory.REG_SZ),RecordingFrequencyHz=('20',memory.REG_SZ))
             self.zwick_controller.poll()  # observe reset before accepting an edge
+            assert self._external_control.values()['AppReady']==1
             self._external_control.write_start_record(True)
             self.zwick_controller.poll()
             assert self.script_panel.pending is not None

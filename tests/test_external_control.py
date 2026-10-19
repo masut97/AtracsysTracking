@@ -29,8 +29,11 @@ def test_registry_migrates_frequency_without_changing_commands_or_name():
     c.write_frequency(80)
     assert r.data['RecordingFrequencyHz']==('80',1)
     c.write_status('Gespeichert',last_recording='example.csv')
+    assert r.data['AppReady']==(1,4)
     c.write_status('Bereit')
     assert r.data['LastRecording'][0]=='example.csv'
+    c.write_app_ready(False)
+    assert r.data['AppReady']==(0,4)
 
 
 def test_stop_wins_even_with_broken_start_and_frequency():
