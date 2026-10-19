@@ -5,7 +5,7 @@ using System.Windows.Forms;
 class ZwickBridgeLauncher {
     [STAThread] static int Main(string[] args) {
         string name=Path.GetFileNameWithoutExtension(Application.ExecutablePath).ToLowerInvariant();
-        string action=name.Contains("final")?"Finalize":name.Contains("stop")?"Stop":"Start";
+        string action=name.Contains("prepare")?"Prepare":name.Contains("final")?"Finalize":name.Contains("stop")?"Stop":"Start";
         string script=Path.Combine(Path.GetDirectoryName(Application.ExecutablePath),"ZwickCoupling","zwick_bridge.ps1");
         var info=new ProcessStartInfo("powershell.exe","-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \""+script+"\" -Action "+action);
         info.UseShellExecute=false;info.CreateNoWindow=true;info.RedirectStandardOutput=true;info.RedirectStandardError=true;

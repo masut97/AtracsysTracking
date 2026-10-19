@@ -80,7 +80,11 @@ def test_finalize_validates_matching_analysis_and_fresh_feedback(tmp_path):
         result=invoke(tmp_path,'Finalize',*args)
         assert result.returncode==0,result.stderr
         report['quality']['status']='critical';report_path.write_text(json.dumps(report))
-        assert invoke(tmp_path,'Finalize',*args).returncode != 0
+        assert invoke(tmp_path,'Finalize',*args).returncode == 0
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key_name) as key:
+            assert winreg.QueryValueEx(key,'AnalysisQuality')[0]=='critical'
+            assert winreg.QueryValueEx(key,'CouplingState')[0]=='Complete'
+            assert winreg.QueryValueEx(key,'CouplingError')[0]==''
         report['quality']['status']='ok';report['zwick']['source']='wrong.tra';report_path.write_text(json.dumps(report))
         assert invoke(tmp_path,'Finalize',*args).returncode != 0
         report['zwick']['source']=session['TRA'];report_path.write_text(json.dumps(report))

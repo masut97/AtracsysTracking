@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Start','Stop','Finalize','Plan')][string]$Action,
+    [ValidateSet('Start','Stop','Finalize','Plan','Prepare')][string]$Action,
     [string]$Root = 'C:\Users\Zwick Biaxial\Documents\Spine_Tester_Red',
     [string]$ControlPath = 'HKCU:\Software\AtracsysTracking\Control',
     [int]$FrequencyHz = 0,
@@ -44,6 +44,27 @@ function Get-Plan {
 }
 try {
     if ($Action -eq 'Plan') { Get-Plan | ConvertTo-Json; exit 0 }
+    if ($Action -eq 'Prepare') {
+        $launcher = 'C:\Users\Public\Documents\AtracsysTracking\Start-Atracsys.ps1'
+        $s = if (Test-Path -LiteralPath $ControlPath) { Read-Control } else { $null }
+        $fresh = $s -and $s.AppReady -eq 1 -and ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$s.HeartbeatUnixMs -lt 5000)
+        if (-not $fresh) {
+            if (-not (Test-Path -LiteralPath $launcher)) { throw 'Shared Atracsys launcher not found.' }
+            $launch = Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$launcher+'"')) -WindowStyle Hidden -Wait -PassThru
+            if ($launch.ExitCode -ne 0) { throw 'Atracsys app launcher failed.' }
+        }
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        do {
+            if (Test-Path -LiteralPath $ControlPath) {
+                $s = Read-Control
+                $fresh = $s.AppReady -eq 1 -and ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$s.HeartbeatUnixMs -lt 5000)
+                if ($fresh -and $s.RecordingState -in @('Aufnahme','Vorbereitung')) { throw 'An existing recording is active/preparing. Preparation did not stop or change it.' }
+                if ($fresh -and $s.CameraReady -eq 1) { exit 0 }
+            }
+            Start-Sleep -Milliseconds 200
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'Camera not ready within timeout. Check camera connection and the current Atracsys app version.'
+    }
     if (-not (Test-Path -LiteralPath $ControlPath)) { throw 'Atracsys app is not ready. Open Atracsys Tracking under the same Windows account as testXpert.' }
     if ($Action -eq 'Start') {
         $s=Read-Control
@@ -134,7 +155,9 @@ try {
             }
             Write-Value 'AnalysisReport' $reportPath
             Write-Value 'AnalysisQuality' ([string]$report.quality.status)
-            if ($report.quality.status -eq 'critical') { throw 'ROM analysis is CRITICAL / NOT APPROVED. Inspect the report before continuing the test sequence.' }
+            # Quality findings are displayed in the plot/report, not command errors.
+            # Keep the original quality status; successful transfer is not approval.
+            Write-Value 'CouplingError' ''
             Write-Value 'CouplingState' 'Complete'
             # Data completion is not a statement of biomechanical test approval.
             exit 0

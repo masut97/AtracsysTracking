@@ -194,6 +194,8 @@ class ZwickController(QObject):
             error=self.error or stats.last_error
             if action in {'start','stop'} or time.monotonic()-self.last_status>=1:
                 control.write_status(state,last_recording=stats.csv_path if not self.busy() else '',last_error=error)
+                guard = getattr(w, 'camera_guard', None)
+                control._write('CameraReady', int(bool(guard and guard.ready())), control.registry.REG_DWORD)
                 if control.last_error:
                     raise OSError(control.last_error)
                 self.last_status=time.monotonic()
