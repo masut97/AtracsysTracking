@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 
-from atracsys_sync.external_control import CommandGate, RegistryControl, integer, recording_target, registry_path
+from atracsys_sync.external_control import CommandGate, RegistryControl, integer, recording_target, registry_path, reported_state
 
 
 class MemoryRegistry:
@@ -113,3 +113,12 @@ def test_registry_status_failure_cannot_interrupt_file_finalization():
     c.write_start_record(False)
     c.write_status('Gespeichert',last_recording='completed.csv')
     assert c.last_error=='write denied'
+
+
+def test_cancelled_preparation_does_not_report_previous_measurement_as_saved():
+    from types import SimpleNamespace
+    previous=SimpleNamespace(state='Gestoppt',csv_path='previous.csv',last_error='')
+    assert reported_state(previous,False,cancelled=True)=='Gestoppt'
+    assert reported_state(previous,True)=='Vorbereitung'
+    assert reported_state(previous,False)=='Gespeichert'
+    assert reported_state(previous,False,error='disk full')=='Fehler'

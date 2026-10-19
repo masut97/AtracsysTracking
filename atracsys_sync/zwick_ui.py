@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .external_control import CommandGate, RegistryControl, integer, recording_target, registry_path
+from .external_control import CommandGate, RegistryControl, integer, recording_target, registry_path, reported_state
 
 
 class ZwickController(QObject):
@@ -18,6 +18,7 @@ class ZwickController(QObject):
         self.error=''
         self.last_status=0.
         self.preparing=False
+        self.cancelled=False
         self._settings(settings_layout)
         self._recording_bar()
         self.timer=QTimer(self); self.timer.setInterval(250)
@@ -135,6 +136,7 @@ class ZwickController(QObject):
             w.script_panel.cancel()
             w._external_control.write_start_record(False)
             self.error=''; self.preparing=False
+            self.cancelled=True
             w._external_control.write_status('Gestoppt')
         else:
             w._stop_recording('zwick')
@@ -166,6 +168,7 @@ class ZwickController(QObject):
                 w.record_frequency_spin.setValue(frequency)
                 w.record_name_edit.setText(name); w.record_directory_edit.setText(str(target))
                 self.error=''
+                self.cancelled=False
                 # Zwick requests an exact name. The legacy 'registry' start silently
                 # adds suffixes, which would break matching with machine exports.
                 w._start_recording('zwick', name_override=name)
@@ -182,8 +185,9 @@ class ZwickController(QObject):
                 self.preparing=False
                 if stats.state=='Gestoppt':
                     self.error=stats.last_error or 'Vorbereitung fehlgeschlagen oder beendet.'
-            state=('Fehler' if self.error or stats.last_error else 'Vorbereitung' if pending else
-                   stats.state if stats.state!='Gestoppt' else 'Gespeichert' if stats.csv_path else 'Bereit')
+            if stats.state!='Gestoppt':
+                self.cancelled=False
+            state=reported_state(stats,pending,self.cancelled,self.error)
             error=self.error or stats.last_error
             if action in {'start','stop'} or time.monotonic()-self.last_status>=1:
                 control.write_status(state,last_recording=stats.csv_path if not self.busy() else '',last_error=error)

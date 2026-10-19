@@ -180,3 +180,15 @@ class CommandGate:
             return 'start'
         self.armed=False
         return 'held'
+
+
+def reported_state(stats, pending, cancelled=False, error=''):
+    if error or stats.last_error:
+        return 'Fehler'
+    if pending:
+        return 'Vorbereitung'
+    if stats.state!='Gestoppt':
+        return stats.state
+    if cancelled:
+        return 'Gestoppt'
+    return 'Gespeichert' if stats.csv_path else 'Bereit'
