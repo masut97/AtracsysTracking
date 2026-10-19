@@ -64,6 +64,7 @@ DEFAULT_CONFIG = {
     "zwick_filename_patterns": ["*.tra"],
     "zwick_max_age_seconds": 300.0,
     "zwick_wait_seconds": 30.0,
+    "zwick_export_leading_result_row": False,
     "zwick_columns": {
         "time": "Prüfzeit",
         "rotation_load": "Standarddrehmoment Torsion",
@@ -125,6 +126,8 @@ class RomZwickData:
     load_unit: str
     displacement_unit: str
     source: Path
+    removed_leading_result_rows: int = 0
+    repeated_time_samples: int = 0
 
 
 @dataclass(frozen=True)
@@ -527,6 +530,9 @@ def load_zwick(path: Path, mode: str, config: dict) -> RomZwickData:
     time_values: list[float] = []
     loads: list[float] = []
     displacements: list[float] = []
+    cycles: list[float] = []
+    cycle_index = next((i for i, header in enumerate(headers)
+                        if common._normalized_text(header) in {"zyklus", "cycle"}), None)
     required = max(indices.values())
     for row in rows[header_index + 1 :]:
         if len(row) <= required:
@@ -541,8 +547,25 @@ def load_zwick(path: Path, mode: str, config: dict) -> RomZwickData:
             time_values.append(sample_time)
             loads.append(load)
             displacements.append(displacement)
+            try:
+                cycles.append(common._parse_number(row[cycle_index]) if cycle_index is not None else math.nan)
+            except (ValueError, IndexError):
+                cycles.append(math.nan)
     if len(loads) < 2:
         raise ValueError("The testXpert file contains fewer than two valid data rows.")
+
+    removed_result_rows = 0
+    # This is an explicit local export-format setting, not a generic timestamp repair.
+    # testXpert can prepend aggregate results: t=0, angle=0, cycle=last cycle,
+    # followed by the actual chronological series at t=0, cycle=0.
+    if (config.get("zwick_export_leading_result_row", False) and len(loads) >= 3
+            and time_values[0] == time_values[1] == 0.0
+            and displacements[0] == 0.0
+            and math.isfinite(cycles[0]) and cycles[0] > cycles[1]
+            and cycles[1] == 0.0):
+        time_values, loads, displacements = time_values[1:], loads[1:], displacements[1:]
+        removed_result_rows = 1
+    repeated_time_samples = sum(b == a for a, b in zip(time_values, time_values[1:]))
 
     load_unit = units[indices["load"]] if indices["load"] < len(units) else ""
     displacement_unit = (
@@ -572,6 +595,8 @@ def load_zwick(path: Path, mode: str, config: dict) -> RomZwickData:
         load_unit=load_unit,
         displacement_unit=displacement_unit,
         source=path,
+        removed_leading_result_rows=removed_result_rows,
+        repeated_time_samples=repeated_time_samples,
     )
 
 
@@ -942,9 +967,17 @@ def evaluate_quality(
             add("critical", "invalid_load_data", "Invalid load data", "Load arrays must contain aligned finite samples.",
                 "Check the testXpert export and units; recover the complete export or repeat the test.")
         else:
-            if any(b<=a for a,b in zip(zwick.times_s,zwick.times_s[1:])):
+            if any(b<a for a,b in zip(zwick.times_s,zwick.times_s[1:])):
                 add("critical", "invalid_load_time", "Load timestamps are not increasing", "Temporal alignment is ambiguous.",
                     "Recover original ordered machine data or repeat with correct timestamps.")
+            elif zwick.repeated_time_samples:
+                add("info", "repeated_load_timestamps", "Repeated machine timestamps retained",
+                    f"{zwick.repeated_time_samples} sample(s) share a timestamp; sample order and all extrema are preserved.",
+                    "No time correction or hardware synchronization is inferred.")
+            if zwick.removed_leading_result_rows:
+                add("info", "export_result_row_excluded", "Leading export result row excluded",
+                    "The configured testXpert aggregate row at time zero is not a chronological measurement sample.",
+                    "The original TRA file is unchanged; its measured series is retained without rescaling time.")
             camera_duration = tracking.times_s[-1]-tracking.times_s[0] if tracking.times_s else 0
             machine_duration = zwick.times_s[-1]-zwick.times_s[0]
             mismatch = abs(camera_duration-machine_duration)/max(camera_duration,machine_duration,1e-9)
@@ -1359,6 +1392,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "displacement_column": zwick.displacement_column,
             "load_unit": zwick.load_unit,
             "displacement_unit": zwick.displacement_unit,
+            "removed_leading_result_rows": zwick.removed_leading_result_rows,
+            "repeated_time_samples": zwick.repeated_time_samples,
+            "duration_s": zwick.times_s[-1] - zwick.times_s[0],
         },
         "rom_metrics": None if metrics is None else {
             "range": metrics.rom_range,
