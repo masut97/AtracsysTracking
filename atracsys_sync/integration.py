@@ -7,6 +7,8 @@ import time
 def install():
     from atracsys_tracker import recording
     from atracsys_tracker.ui.main_window import MainWindow
+    from atracsys_tracker.ui import main_window
+    from .external_control import RegistryControl
     from .layout import organize_window
     from .analysis_selection import populate
     from .panel import ScriptPanel
@@ -20,6 +22,7 @@ def install():
     Worker = recording.RecordingWorker
     if getattr(Worker, "_measurement_extension_installed", False):
         return
+    main_window.WindowsRegistryControl = RegistryControl
     validate_tracker_contract(recording, MainWindow, NativeBridgeAdapter)
 
     start_original = Worker.start_session
@@ -152,9 +155,16 @@ def install():
         result = window_refresh(self, *args, **kwargs)
         panel = getattr(self, "script_panel", None)
         if panel is not None and panel.pending is not None:
-            self.record_button.setText("Vorbereitung stoppen")
             self._set_recording_message("Messgeräte werden vorbereitet …", "ready")
+        zwick = getattr(self, 'zwick_controller', None)
+        if zwick is not None:
+            zwick.refresh()
         return result
+
+    def poll_external(self, now):
+        controller = getattr(self, 'zwick_controller', None)
+        if controller is not None:
+            controller.poll(now)
 
     def close_window(self, event):
         free = getattr(self, 'free_analysis_controller', None)
@@ -181,6 +191,7 @@ def install():
     MainWindow._start_recording = start_window
     MainWindow._toggle_recording = toggle_window
     MainWindow._refresh_recording_status = refresh_window
+    MainWindow._poll_external_control = poll_external
     MainWindow.closeEvent = close_window
     MainWindow._maybe_launch_analysis = maybe_analyze
     MainWindow._populate_analysis_scripts = populate

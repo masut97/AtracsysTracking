@@ -289,11 +289,11 @@ def _measurement_dropdown(window, panel, tabs, tab_index):
         states = [panel.table.item(row_index, 1).text() for row_index in selected]
         problem = any(state == "Fehler" or state.startswith("Datenlücke") for state in states)
         suffix = " · Error" if problem else ""
-        button.setText(f"Devices: {len(selected)}{suffix}  ▾")
+        button.setText(f"Messgeräte: {len(selected)}{suffix}  ▾")
         details = [f"{panel.specs[row_index].name}: {panel.table.item(row_index, 1).text()}"
                    for row_index in selected]
         button.setToolTip("\n".join(details) if details else "No devices selected")
-        tabs.setTabText(tab_index, f"Devices ({len(selected)})")
+        tabs.setTabText(tab_index, f"Messgeräte ({len(selected)})")
 
     def rebuild_menu():
         menu.clear()
@@ -308,7 +308,7 @@ def _measurement_dropdown(window, panel, tabs, tab_index):
                     Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked))
             menu.addAction(action)
         menu.addSeparator()
-        manage = menu.addAction("Manage devices …")
+        manage = menu.addAction("Messgeräte verwalten …")
         manage.triggered.connect(lambda: tabs.setCurrentIndex(tab_index))
 
     menu.aboutToShow.connect(rebuild_menu)
@@ -353,11 +353,11 @@ def organize_window(window, panel):
     devices_page = QWidget(tabs)
     devices_layout = QVBoxLayout(devices_page)
     devices_layout.setContentsMargins(8, 8, 8, 8)
-    panel.setTitle("CONNECTIONS AND SYNCHRONIZATION")
+    panel.setTitle("VERBINDUNGEN UND ZEITABGLEICH")
     panel.setMaximumHeight(380)
     devices_layout.addWidget(panel)
     devices_layout.addStretch(1)
-    devices_index = tabs.addTab(devices_page, "Devices")
+    devices_index = tabs.addTab(devices_page, "Messgeräte")
 
     analysis_page = QWidget(tabs)
     analysis_layout = QVBoxLayout(analysis_page)
@@ -414,7 +414,7 @@ def organize_window(window, panel):
     retrospective_layout.addLayout(action_row)
     analysis_layout.addWidget(retrospective_group)
     analysis_layout.addStretch(1)
-    analysis_index = tabs.addTab(analysis_page, "Analysis")
+    analysis_index = tabs.addTab(analysis_page, "Auswertung")
 
     outer.addWidget(tabs, 1)
     marker_footer = QWidget(central)
@@ -429,6 +429,8 @@ def organize_window(window, panel):
     _tool_dropdown(toolbar)
     _measurement_dropdown(window, panel, tabs, devices_index)
     window.workspace_tabs = tabs
+    from .zwick_ui import add_settings
+    add_settings(window, tabs)
     window.setAcceptDrops(True)
     window.retrospective_controller = _RetrospectiveController(
         window, tabs, analysis_index, status, select_button, drop_zone

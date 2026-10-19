@@ -6,7 +6,8 @@ Die erweiterte Anwendung heißt `AtracsysLiveTracker_Messskripte.exe`. Die bishe
 ## Bedienung
 
 Die Aufnahmeleiste bleibt in allen Ansichten sichtbar. Darunter gliedern drei Tabs die
-Anwendung:
+Anwendung; zusätzlich gibt es **Einstellungen** für manuelle Speicherziele,
+Zwick-Steuerung und Software-Updates:
 
 - **Live** zeigt beide Kamerabilder und erkannte Geometrien. Selten benötigte Markerfunktionen
   befinden sich im Dropdown **Werkzeuge**.
@@ -26,6 +27,10 @@ dieser Wartezustand ist kein Fehler.
    Live-Ansicht. **Aufnahme stoppen**
    beendet und speichert alle Quellen.
 5. **Details** zeigt Datenrate, gespeicherte Zeilen, Datenlücken, Verluste und Fehlermeldungen.
+
+Start und Stop sind getrennte Schaltflächen. Die Frequenz lässt sich direkt als
+ganze Dezimalzahl in Hz eingeben. Für die direkte Steuerung aus Zwick ohne
+ExperimentName.txt siehe [Zwick-Steuerung](ZWICK_CONTROL.md).
 
 Für die aktuell angeschlossene Hardware wird `zugkraft.py` verwendet. Der Treiber
 liest den laufenden Zahlenstrom des Nano ESP32 direkt über USB und entspricht der

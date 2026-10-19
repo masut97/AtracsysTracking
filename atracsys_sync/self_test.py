@@ -6,6 +6,21 @@ import time
 import traceback
 
 
+class _MemoryRegistry:
+    """No Windows registry or real external software is touched by this test."""
+    HKEY_CURRENT_USER=1; KEY_READ=1; KEY_WRITE=2
+    REG_SZ=1; REG_DWORD=4; REG_QWORD=11
+    def __init__(self): self.data={}
+    def CreateKeyEx(self,*_args): return self
+    def OpenKey(self,*_args): return self
+    def __enter__(self): return self
+    def __exit__(self,*_args): pass
+    def QueryValueEx(self,_key,name):
+        if name not in self.data: raise FileNotFoundError(name)
+        return self.data[name]
+    def SetValueEx(self,_key,name,_zero,kind,value): self.data[name]=(value,kind)
+
+
 def run(output: Path):
     output.mkdir(parents=True, exist_ok=True)
     from PySide6.QtCore import QPoint, QRect, Qt, QTimer
@@ -46,9 +61,14 @@ def run(output: Path):
         self.record_frequency_spin.setValue(20)
         for row, spec in enumerate(self.script_panel.specs):
             self.script_panel.table.item(row, 0).setCheckState(Qt.CheckState.Checked if spec.simulated else Qt.CheckState.Unchecked)
-        assert self.workspace_tabs.count() == 3
-        tab_names = tuple(self.workspace_tabs.tabText(i).split(" (")[0] for i in range(3))
-        assert tab_names in {("Live", "Messgeräte", "Auswertung"), ("Live", "Devices", "Analysis")}, tab_names
+        assert self.workspace_tabs.count() == 4
+        tab_names = tuple(self.workspace_tabs.tabText(i).split(" (")[0] for i in range(4))
+        assert tab_names == ("Live", "Messgeräte", "Auswertung", "Einstellungen"), tab_names
+        assert self.findChild(QPushButton, 'stopRecordingButton') is not None
+        assert self.record_frequency_spin.lineEdit().isReadOnly() is False
+        self.record_frequency_spin.lineEdit().setText('20')
+        self.record_frequency_spin.interpretText()
+        assert self.record_frequency_spin.value() == 20
         measurement_menu = self.findChild(QToolButton, "measurementMenuButton")
         workspace_menu = self.findChild(QToolButton, "workspaceMenuButton")
         assert measurement_menu is not None and measurement_menu.menu() is not None
@@ -139,7 +159,9 @@ def run(output: Path):
             second_name = recording_name + "_second"
             self.record_name_edit.setText(second_name)
             self._start_recording("ui")
-            assert self.record_button.text() == "Vorbereitung stoppen"
+            assert self.record_button.text() == "Aufnahme starten"
+            assert not self.record_button.isEnabled()
+            assert self.stop_record_button.isEnabled()
             assert "Fehler" not in measurement_menu.text()
             second_deadline = time.monotonic() + 16
 
@@ -164,9 +186,24 @@ def run(output: Path):
         def capture_tabs_and_stop():
             def capture_analysis():
                 capture("analysis.png")
-                button = self.findChild(QPushButton, "softwareUpdateButton")
-                assert button is not None and button.isVisible()
-                assert button.grab().save(str(output / "update-button.png"))
+                assert self.findChild(QPushButton, "softwareUpdateButton") is not None
+
+            def capture_settings():
+                self.workspace_tabs.setCurrentIndex(3)
+                capture('settings.png')
+                button=self.findChild(QPushButton,'softwareUpdateButton')
+                assert button.isVisible()
+                assert button.grab().save(str(output/'update-button.png'))
+
+            def external_stop():
+                memory=self._external_control.registry
+                memory.data['RecordingFrequencyHz']=('invalid but stop must work',memory.REG_SZ)
+                memory.data['StopRecord']=(1,memory.REG_DWORD)
+                self.zwick_controller.poll()
+                assert self.recorder.stats().state=='Gestoppt'
+                assert self._external_control.values()['StopRecord']==0
+                assert self._external_control.values()['StartRecord']==0
+                self._external_control.write_frequency(20)
 
             self.workspace_tabs.setCurrentIndex(0)
             capture("live.png")
@@ -174,8 +211,9 @@ def run(output: Path):
             QTimer.singleShot(500, protect(lambda: capture("running.png")))
             QTimer.singleShot(750, protect(lambda: self.workspace_tabs.setCurrentIndex(2)))
             QTimer.singleShot(1000, protect(capture_analysis))
-            QTimer.singleShot(1250, protect(lambda: self.workspace_tabs.setCurrentIndex(0)))
-            QTimer.singleShot(1400, protect(lambda: self._stop_recording("ui")))
+            QTimer.singleShot(1200, protect(capture_settings))
+            QTimer.singleShot(1350, protect(lambda: self.workspace_tabs.setCurrentIndex(0)))
+            QTimer.singleShot(1400, protect(external_stop))
             QTimer.singleShot(1750, protect(lambda: capture("stopped.png")))
             QTimer.singleShot(1950, protect(begin_second))
 
@@ -192,7 +230,22 @@ def run(output: Path):
 
         def begin_first():
             nonlocal deadline
-            self._start_recording("ui")
+            from .external_control import RegistryControl
+            memory=_MemoryRegistry()
+            self._external_control=RegistryControl(r'Software\IsolatedTest\Control',registry=memory)
+            memory.data.update(RecordingName=(recording_name,memory.REG_SZ),
+                RecordingDirectory=(str(output),memory.REG_SZ),RecordingFrequencyHz=('20',memory.REG_SZ))
+            self.zwick_controller.poll()  # observe reset before accepting an edge
+            self._external_control.write_start_record(True)
+            self.zwick_controller.poll()
+            assert self.script_panel.pending is not None
+            assert not self.record_name_edit.isEnabled()
+            assert not self.record_directory_edit.isEnabled()
+            memory.data['RecordingName']=('must_not_change_active_session',memory.REG_SZ)
+            memory.data['RecordingFrequencyHz']=('invalid while preparing',memory.REG_SZ)
+            self.zwick_controller.poll()
+            assert self.record_name_edit.text()==recording_name
+            assert self.record_frequency_spin.value()==20
             deadline = time.monotonic() + 16
 
         QTimer.singleShot(1000, protect(begin_first))
@@ -248,6 +301,8 @@ def run(output: Path):
                   "marker_footer_visible_in_all_tabs": True,
                   "curated_analysis_selection_and_profile_toggle": True,
                   "free_profile_editor_save_and_activity_guards": True,
+                  "zwick_start_stop_and_frozen_parameters": True,
+                  "separate_start_stop_and_settings_tab": True,
                   "source_processes_stopped": all(s.process.poll() is not None for s in windows[0].script_panel.group.sources)}
         (output / "result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         return result

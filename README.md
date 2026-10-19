@@ -19,6 +19,15 @@ Laufzeitbibliotheken werden aus einer vorhandenen, berechtigt genutzten
 Installation Ã¼bernommen. Sie werden nicht in Git gespeichert. Der Builder
 prÃ¼ft die unverÃ¤nderten eingebetteten Module der Basisanwendung.
 
+## Zwick-Steuerung und Aufnahme
+
+Start und Stop sind getrennte, stets sichtbare Schaltflächen. Die Frequenz kann
+direkt als Dezimalzahl eingegeben werden. Manuelle Dateinamen und Exportordner,
+der kopierbare und änderbare Registry-Pfad sowie Updates stehen unter
+**Einstellungen**. Zwick kann Name, Ordner und Frequenz direkt vorgeben; eine
+`ExperimentName.txt` ist nicht erforderlich. Protokoll und Ablauf:
+[Zwick / testXpert control](ZWICK_CONTROL.md).
+
 ## Auswahl der Auswertung
 
 Die normale Liste bietet **Automatisch erkennen**, **ROM**, **Trochanter** und
