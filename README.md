@@ -7,6 +7,7 @@ nicht zugesichert. Rohmessungen und Kalibrierungen gehÃ¶ren nicht in dieses Re
 
 ## Projektstruktur
 
+- `native/`: wiederhergestellter und gegen die aktuelle Bridge geprüfter C++-Quellcode; [Build und Prüfnachweis](native/README.md).
 - `atracsys_sync/`: Aufnahmesteuerung, GerÃ¤teprozesse, Versionsadapter und OberflÃ¤che.
 - `measurement_scripts/`: Messquellen; Simulation und serielle Kraftmessung.
 - `analysis_scripts/`: Auswertungen, gemeinsame Bibliothek in `_lib/`.

@@ -1,0 +1,67 @@
+{
+  "equivalent_except_build_metadata": true,
+  "reference": {
+    "sha256": "4d4f7affa69e46072e57124ff11008704876c79ce460e457747a8a31e8777f39",
+    "normalized_sha256": "33d3b2460315053a6361dfd01250f6bf8d8b0b015a846a06958fb75aa0404593",
+    "ignored_metadata_ranges": [
+      [
+        128,
+        112
+      ],
+      [
+        272,
+        4
+      ],
+      [
+        211720,
+        4
+      ]
+    ],
+    "sections": {
+      ".text": "f1e417bbd2bef5d86532b2b3d204511d6c0e04881ebf75448f93095504993062",
+      ".rdata": "a8c0427b145b189f52fe73d3b78bf06778728ae6333651504759f6bccecc8229",
+      ".data": "cf14bf1e8b8d81d9173c201555bdb4d2f02e3f6bd3b0bb0db4423dc59fe53744",
+      ".pdata": "0a7679c6bab81f5f83cc7d6e03cde7a41e53b380f708b32602756a7318458083",
+      ".fptable": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+      ".rsrc": "35e254267d32df2f16a80b4ba39c1bbb776cfe7c831be44145503bf088fb277f",
+      ".reloc": "aaffaea390600ee957662b038ffe028a1245e9b57e8cbafea802fa4b698f75e3"
+    }
+  },
+  "candidate": {
+    "sha256": "16aa6081fcab1dac5fe54de4bdeed3ac06b575402f663bbf3344a62a2e69c753",
+    "normalized_sha256": "33d3b2460315053a6361dfd01250f6bf8d8b0b015a846a06958fb75aa0404593",
+    "ignored_metadata_ranges": [
+      [
+        128,
+        112
+      ],
+      [
+        272,
+        4
+      ],
+      [
+        211720,
+        4
+      ]
+    ],
+    "sections": {
+      ".text": "f1e417bbd2bef5d86532b2b3d204511d6c0e04881ebf75448f93095504993062",
+      ".rdata": "d4f27da86b811b2cfc7fe81474bab95ca91f42c5a63213d0a4a11cc91ac41412",
+      ".data": "cf14bf1e8b8d81d9173c201555bdb4d2f02e3f6bd3b0bb0db4423dc59fe53744",
+      ".pdata": "0a7679c6bab81f5f83cc7d6e03cde7a41e53b380f708b32602756a7318458083",
+      ".fptable": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+      ".rsrc": "35e254267d32df2f16a80b4ba39c1bbb776cfe7c831be44145503bf088fb277f",
+      ".reloc": "aaffaea390600ee957662b038ffe028a1245e9b57e8cbafea802fa4b698f75e3"
+    }
+  },
+  "verified_on": "2026-10-20",
+  "reference_application_revision": "10b31753ab36",
+  "compiler": "MSVC 19.44.35229.0",
+  "windows_sdk": "10.0.26100.0",
+  "configuration": "Release x64 C++17 static MSVC runtime",
+  "source_sha256": {
+    "bridge_main.cpp": "f82e51bc3033b210fc64be67a51ccda720d78ff557be08a14dd47609ea94c78d",
+    "shared_protocol.hpp": "e7b6729f98e719f1b8a3c4f62251c42c147cbdd65caca1154ca6a80345f019bb"
+  },
+  "hardware_test_performed": false
+}
