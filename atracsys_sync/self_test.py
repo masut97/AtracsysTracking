@@ -24,7 +24,7 @@ class _MemoryRegistry:
 def run(output: Path):
     output.mkdir(parents=True, exist_ok=True)
     from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-    from PySide6.QtWidgets import QToolButton, QPushButton
+    from PySide6.QtWidgets import QApplication, QToolButton, QPushButton
     from atracsys_tracker import app
     from atracsys_tracker.ui.main_window import MainWindow
     from .protocol import hardware_requirement
