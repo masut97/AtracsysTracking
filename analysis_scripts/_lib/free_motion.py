@@ -2,6 +2,7 @@
 import copy
 import math
 import statistics
+import re
 
 import auswertung as algebra
 
@@ -13,6 +14,17 @@ OUTPUTS = {
     'rotation_axis': ('Projected rotation', 'deg'),
     'rotation_total': ('Net rotation magnitude', 'deg'),
 }
+
+
+def marker_selector(value):
+    """Legacy geometry IDs or explicit geometry:tracking identity; never an ordinal."""
+    text = str(value)
+    if type(value) not in (int, str) or not re.fullmatch(r'[1-9]\d*(?::[0-9]+)?', text):
+        raise ValueError('Use a geometry ID or geometry:tracking ID.')
+    parts = text.split(':')
+    if any(str(int(p)) != p or int(p) > 2147483647 for p in parts):
+        raise ValueError('Invalid geometry/tracking ID.')
+    return int(text) if len(parts) == 1 else text
 
 
 def validate_profile(value):
@@ -30,12 +42,7 @@ def validate_profile(value):
         raise ValueError('Define 2–128 marker IDs and names.')
     normalized = {}
     for marker, label in markers.items():
-        try:
-            marker_id = int(marker)
-        except (ValueError, TypeError):
-            raise ValueError('Marker IDs must be positive integers.') from None
-        if str(marker_id) != str(marker) or not 1 <= marker_id <= 2147483647:
-            raise ValueError('Marker IDs must be positive integers.')
+        marker_id = marker_selector(marker)
         label = str(label).strip()
         if not label or len(label) > 80:
             raise ValueError('Each marker needs a name of 1–80 characters.')
@@ -44,7 +51,7 @@ def validate_profile(value):
         raise ValueError('Marker names must be distinct.')
     profile['markers'] = normalized
     ref = profile.get('reference')
-    if type(ref) is not int or str(ref) not in normalized:
+    if marker_selector(ref) != ref or str(ref) not in normalized:
         raise ValueError('Select a reference marker from the defined marker IDs.')
     baseline = profile.get('baseline_seconds', 1.)
     if type(baseline) not in (int, float) or not math.isfinite(baseline) or not 0 <= baseline <= 300:
@@ -64,7 +71,7 @@ def validate_profile(value):
             raise ValueError('Comparison names must be distinct and contain 1–80 characters.')
         names.add(pair['name'].casefold())
         for field in ('anchor', 'target'):
-            if type(pair.get(field)) is not int or str(pair[field]) not in normalized:
+            if marker_selector(pair.get(field)) != pair[field] or str(pair[field]) not in normalized:
                 raise ValueError('Each comparison needs two defined marker IDs.')
         if pair['anchor'] == pair['target']:
             raise ValueError('A marker cannot be compared with itself.')

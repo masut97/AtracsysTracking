@@ -104,6 +104,25 @@ def run(output: Path):
         save_profile(stored, editor.value(), backend(root).validate_profile)
         assert backend(root).load_profile(stored) == editor.value()
         editor.deleteLater()
+        visible = {'299:10':'Reference instance', '301:20':'First 301', '301:21':'Second 301',
+                   '302:30':'First 302', '302:31':'Second 302'}
+        instances = ProfileDialog(root, parent=self, visible_choices=lambda: visible)
+        assert instances.markers.rowCount() == 5
+        instances.add_pair(dict(name='Two instances', anchor='301:20', target='301:21', outputs=['tx'], axis=[0,0,1]))
+        instances.reference.setCurrentIndex(instances.reference.findData('299:10'))
+        assert instances.value()['comparisons'][0]['target'] == '301:21'
+        instances.resize(1100, 800); instances.show(); QApplication.processEvents()
+        instances.grab().save(str(output/'free-instances.png'))
+        visible.pop('301:21')
+        instances.refresh_choices()
+        assert instances.pairs.cellWidget(0, 2).findData('301:21') == -1
+        try:
+            instances.value()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Invisible instance accepted')
+        instances.close(); instances.deleteLater()
         controller = self.free_analysis_controller
         original_start = self.script_panel.start_recording
         calls = []

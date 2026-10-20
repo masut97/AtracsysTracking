@@ -14,7 +14,7 @@ if str(DIRECTORY) not in sys.path:
     sys.path.insert(0, str(DIRECTORY))
 
 import rom_auswertung as tracking
-from _lib.free_motion import OUTPUTS, relative_motion, validate_profile
+from _lib.free_motion import OUTPUTS, relative_motion, validate_profile, marker_selector
 
 PROFILE_PATH = DIRECTORY / 'free_analysis_config.local.json'
 
@@ -45,9 +45,9 @@ def analyze(source, profile, output=None):
         ref, anchor, target = profile['reference'], pair['anchor'], pair['target']
         result = dict(index=index, comparison=pair, issues=[], times_s=[], curves={}, statistics={})
         try:
-            data = tracking._load_current_tracking(source, sorted({ref, anchor, target}))
+            data = tracking._load_current_tracking(source, sorted({ref, anchor, target}, key=str), explicit_instances=True)
         except ValueError:
-            result['issues'].append(f'No complete valid samples for reference {ref}, anchor {anchor}, target {target}. Check IDs, marker visibility and pose validity.')
+            result['issues'].append(f'No complete unambiguous valid samples for reference {ref}, anchor {anchor}, target {target}. Check geometry/tracking IDs, marker visibility and pose validity. Multiple instances require explicit tracking IDs.')
             results.append(result)
             continue
         try:
@@ -72,7 +72,7 @@ def analyze(source, profile, output=None):
         if data.invalid_samples:
             result['issues'].append(f'{data.invalid_samples} invalid input rows. Inspect the original recording/export; no invalid pose was filled in.')
         if data.unseen_marker_events:
-            ids = sorted({marker for _time,markers in data.unseen_marker_events for marker in markers})
+            ids = sorted({marker for _time,markers in data.unseen_marker_events for marker in markers}, key=str)
             result['issues'].append(f'Received frames explicitly flag these required marker IDs as not visible: {ids}. Check placement, occlusion and reflectors. This is distinct from absent saved camera frames.')
         if any(b <= a for a,b in zip(data.received_times_s, data.received_times_s[1:])):
             result['issues'].append('The recorded frame heartbeat has repeated or backwards timestamps. Inspect acquisition/export order; the original ordering was retained.')

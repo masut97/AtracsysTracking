@@ -23,14 +23,16 @@ from .profile_store import save_profile
 
 
 class ProfileDialog(QDialog):
-    def __init__(self, root, profile=None, parent=None):
+    def __init__(self, root, profile=None, parent=None, visible_choices=None):
         super().__init__(parent)
         self.analysis = backend(root)
+        self.visible_choices = visible_choices
         self.setWindowTitle('Freie Markerzuordnung')
         self.resize(1000, 770)
         layout = QVBoxLayout(self)
         explanation = QLabel('Marker frei benennen und Vergleiche definieren. „Ziel relativ zu Basis“ entfernt die Bewegung der Basis; '
-                             'der Referenzmarker bestimmt die Ausgabeachsen. Es werden keine Wirbel- oder Clamp-Rollen vorausgesetzt.')
+                             'der Referenzmarker bestimmt die Ausgabeachsen. Instanzen werden über Geometrie:Tracking-ID getrennt. '
+                             'Nach Neuverbindung oder ID-Wechsel muss die Zuordnung geprüft werden; keine automatische Ersatzzuordnung.')
         explanation.setWordWrap(True); layout.addWidget(explanation)
         form = QFormLayout()
         self.name = QLineEdit('Freies Messprofil'); self.name.setMaxLength(80)
@@ -42,13 +44,16 @@ class ProfileDialog(QDialog):
         form.addRow('Baseline vor der Bewegung', self.baseline); layout.addLayout(form)
         layout.addWidget(QLabel('1 · Marker-IDs und frei wählbare Namen'))
         self.markers = QTableWidget(0, 2); self.markers.setObjectName('freeMarkerTable')
-        self.markers.setHorizontalHeaderLabels(['Marker-ID', 'Name / Bedeutung'])
+        self.markers.setHorizontalHeaderLabels(['Geometrie-ID:Tracking-ID', 'Name / Bedeutung'])
+        self.markers.setColumnWidth(0, 210)
         self.markers.horizontalHeader().setStretchLastSection(True)
         self.markers.setMaximumHeight(175); layout.addWidget(self.markers)
         row = QHBoxLayout()
         self._button(row, 'Marker hinzufügen', self.add_marker)
         self._button(row, 'Markierte Marker entfernen', lambda: self.remove_rows(self.markers))
         self._button(row, 'IDs aus CSV übernehmen …', self.ids_from_csv)
+        if self.visible_choices is not None:
+            self._button(row, 'Sichtbare Instanzen übernehmen', self.use_visible)
         row.addStretch(1); layout.addLayout(row)
         layout.addWidget(QLabel('2 · Vergleiche: Ziel relativ zu Basis (beliebig viele, maximal 32)'))
         self.pairs = QTableWidget(0, 5); self.pairs.setObjectName('freeComparisonTable')
@@ -71,13 +76,20 @@ class ProfileDialog(QDialog):
         self.markers.itemChanged.connect(self.refresh_choices)
         if profile:
             self.set_profile(profile)
-        else:
-            geometry_dir = Path(root)/'geometries'
-            for file in sorted(geometry_dir.glob('*.json5')):
-                match = re.fullmatch(r'geometry(\d+)', file.stem, re.IGNORECASE)
-                if match:
-                    self.add_marker(int(match.group(1)))
-            self.refresh_choices()
+        elif self.visible_choices is not None:
+            self.use_visible()
+
+    def use_visible(self):
+        names = self.visible_choices()
+        self.markers.blockSignals(True)
+        try:
+            self.markers.setRowCount(0)
+            for marker, label in names.items():
+                self.add_marker(marker, label)
+        finally:
+            self.markers.blockSignals(False)
+        self.refresh_choices()
+        self.error.setText('Nur aktuell sichtbare Instanzen. Tracking-IDs können nach Neuverbindung wechseln; Zuordnung dann neu prüfen.')
 
     @staticmethod
     def _button(layout, label, action):
@@ -115,8 +127,12 @@ class ProfileDialog(QDialog):
         except ValueError:
             names = {}
         for key, label in names.items():
-            if key.isdigit() and 1 <= int(key) <= 2147483647:
-                combo.addItem(f'{label} ({key})', int(key))
+            try:
+                selector = self.analysis.marker_selector(key)
+            except ValueError:
+                continue
+            if self.visible_choices is None or key in self.visible_choices():
+                combo.addItem(f'{label} ({key})', selector)
         selected = combo.findData(previous)
         combo.setCurrentIndex(max(0, selected))
 
@@ -146,6 +162,13 @@ class ProfileDialog(QDialog):
         self.pairs.setItem(row, 4, axis_item)
 
     def value(self):
+        if self.visible_choices is not None:
+            visible = self.visible_choices()
+            used = [self.reference.currentData()]
+            for row in range(self.pairs.rowCount()):
+                used.extend(self.pairs.cellWidget(row, col).currentData() for col in (1, 2))
+            if any(str(key) not in visible for key in used):
+                raise ValueError('Eine gewählte Instanz ist nicht mehr sichtbar. Sichtbare Instanzen übernehmen und Zuordnung prüfen.')
         pairs = []
         for row in range(self.pairs.rowCount()):
             name = self.pairs.item(row, 0).text()
@@ -163,8 +186,11 @@ class ProfileDialog(QDialog):
         self.markers.blockSignals(True)
         try:
             self.markers.setRowCount(0); self.pairs.setRowCount(0)
-            for marker, label in profile['markers'].items():
-                self.add_marker(int(marker), label)
+            names = profile['markers']
+            if self.visible_choices is not None:
+                names = {key: names.get(key, label) for key, label in self.visible_choices().items()}
+            for marker, label in names.items():
+                self.add_marker(marker, label)
         finally:
             self.markers.blockSignals(False)
         self.name.setText(profile['name']); self.baseline.setValue(profile['baseline_seconds'])
@@ -176,10 +202,14 @@ class ProfileDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, 'Marker-IDs aus Aufnahme übernehmen', '', 'CSV (*.csv)')
         if path:
             try:
-                from auto_auswertung import available_marker_ids
+                import csv
                 known = self.marker_names()
-                for marker in sorted(available_marker_ids(Path(path))):
-                    if str(marker) not in known:
+                with Path(path).open(encoding='utf-8-sig', newline='') as stream:
+                    keys = {f"{row['geometry_id']}:{row['tracking_id']}" if row.get('tracking_id','').strip() else row['geometry_id']
+                            for row in csv.DictReader(stream) if row.get('visible') == '1' and row.get('geometry_id','').strip()}
+                for marker in sorted(keys):
+                    self.analysis.marker_selector(marker)
+                    if marker not in known:
                         self.add_marker(marker)
                 self.refresh_choices()
             except Exception as error:
@@ -262,7 +292,9 @@ class FreeAnalysisController(QObject):
             profile = None
         self.editing = True
         try:
-            editor = ProfileDialog(self.window.project_root, profile, self.window)
+            from .marker_selection import visible_marker_choices
+            editor = ProfileDialog(self.window.project_root, profile, self.window,
+                                   visible_choices=lambda: visible_marker_choices(self.window))
             if editor.exec() == QDialog.DialogCode.Accepted:
                 save_profile(analysis.PROFILE_PATH, editor.saved_profile, analysis.validate_profile)
                 selected = self.window.project_root/'analysis_scripts/free_auswertung.py'

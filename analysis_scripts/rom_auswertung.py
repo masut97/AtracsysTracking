@@ -243,13 +243,14 @@ def _valid_pose(pose: RomPose) -> bool:
                                          for i in range(3) for j in range(3)))
 
 
-def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTrackingData:
+def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_instances=False) -> RomTrackingData:
     frames: dict[str, dict[int, RomPose]] = {}
     frame_times: dict[str, float] = {}
     total_rows = 0
     invalid_rows = 0
     unseen = {}
     wanted = set(marker_ids)
+    ambiguous = set()
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = set(reader.fieldnames or ())
@@ -283,6 +284,13 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
             except (TypeError, ValueError):
                 if row.get('visible','')=='0':unseen.setdefault(sample,set()).update(wanted)
                 continue
+            if explicit_instances:
+                tracking_id = row.get('tracking_id', '').strip()
+                qualified = f'{marker_id}:{tracking_id}'
+                if qualified in wanted:
+                    marker_id = qualified
+                elif marker_id not in wanted:
+                    continue
             if marker_id not in wanted:
                 continue
             if row.get("visible", "") != "1":
@@ -302,7 +310,13 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
             except (TypeError,ValueError):
                 invalid_rows += 1
                 continue
+            if explicit_instances and marker_id in frames[sample]:
+                ambiguous.add((sample, marker_id))
+                invalid_rows += 1
             frames.setdefault(sample, {})[marker_id] = pose
+
+    for sample, marker_id in ambiguous:
+        frames[sample].pop(marker_id, None)
 
     complete = [
         (frame_times[key], poses)
@@ -326,7 +340,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int]) -> RomTracking
         source_format="atracsys_long_csv",
         invalid_samples=invalid_rows,
         received_times_s=tuple(value-start for value in frame_times.values()),
-        unseen_marker_events=tuple((frame_times[key]-start,tuple(sorted(ids))) for key,ids in unseen.items()),
+        unseen_marker_events=tuple((frame_times[key]-start,tuple(sorted(ids, key=str))) for key,ids in unseen.items()),
     )
 
 
