@@ -111,11 +111,40 @@ def run(output: Path):
         instances.add_pair(dict(name='Two instances', anchor='301:20', target='301:21', outputs=['tx'], axis=[0,0,1]))
         instances.reference.setCurrentIndex(instances.reference.findData('299:10'))
         assert instances.value()['comparisons'][0]['target'] == '301:21'
+        # Exercise the actual buttons, not only programmatically populated rows.
+        add_marker_button = next(b for b in instances.findChildren(QPushButton) if b.text() == 'Marker hinzufügen')
+        add_pair_button = next(b for b in instances.findChildren(QPushButton) if b.text() == 'Vergleich hinzufügen')
+        add_marker_button.click()  # all visible markers are already listed
+        assert instances.markers.rowCount() == 5
+        assert instances.reference.currentData() == '299:10'
+        instances.markers.selectRow(4); instances.remove_rows(instances.markers)
+        assert instances.reference.currentData() == '299:10'
+        QTimer.singleShot(0, lambda: QApplication.activeModalWidget().accept())
+        add_marker_button.click()
+        assert instances.markers.rowCount() == 5
+        assert instances.reference.currentData() == '299:10'
+        assert instances.pairs.cellWidget(0, 1).currentData() == '301:20'
+        assert instances.pairs.cellWidget(0, 2).currentData() == '301:21'
+        # A duplicate/incomplete edit must not empty otherwise valid choices.
+        instances.add_marker('301:20', 'Duplicate test')
+        assert instances.reference.currentData() == '299:10'
+        assert instances.pairs.cellWidget(0, 2).currentData() == '301:21'
+        instances.markers.removeRow(5); instances.refresh_choices()
+        add_pair_button.click()
+        assert instances.pairs.rowCount() == 2
+        for column, identity in ((1, '302:30'), (2, '302:31')):
+            choice = instances.pairs.cellWidget(1, column)
+            assert choice.findData(identity) >= 0
+            choice.setCurrentIndex(choice.findData(identity))
+        assert len(instances.value()['comparisons']) == 2
         instances.resize(1100, 800); instances.show(); QApplication.processEvents()
         instances.grab().save(str(output/'free-instances.png'))
         visible.pop('301:21')
-        instances.refresh_choices()
-        assert instances.pairs.cellWidget(0, 2).findData('301:21') == -1
+        instances.use_visible()
+        target = instances.pairs.cellWidget(0, 2)
+        assert target.currentData() == '301:21'
+        assert not target.model().item(target.currentIndex()).isEnabled()
+        assert instances.reference.currentData() == '299:10'
         try:
             instances.value()
         except ValueError:

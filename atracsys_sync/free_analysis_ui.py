@@ -4,11 +4,11 @@ import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog)
 
 
 def backend(root):
@@ -27,6 +27,7 @@ class ProfileDialog(QDialog):
         super().__init__(parent)
         self.analysis = backend(root)
         self.visible_choices = visible_choices
+        self.choice_snapshot = visible_choices() if visible_choices is not None else None
         self.setWindowTitle('Freie Markerzuordnung')
         self.resize(1000, 770)
         layout = QVBoxLayout(self)
@@ -81,11 +82,18 @@ class ProfileDialog(QDialog):
 
     def use_visible(self):
         names = self.visible_choices()
+        self.choice_snapshot = names
+        try:
+            previous_names = self.marker_names()
+        except ValueError:
+            previous_names = {}
         self.markers.blockSignals(True)
         try:
-            self.markers.setRowCount(0)
+            # Retain configured identities and labels, including a temporarily lost
+            # reference. Missing identities are displayed disabled, never rebound.
             for marker, label in names.items():
-                self.add_marker(marker, label)
+                if marker not in previous_names:
+                    self.add_marker(marker, label)
         finally:
             self.markers.blockSignals(False)
         self.refresh_choices()
@@ -97,9 +105,38 @@ class ProfileDialog(QDialog):
         layout.addWidget(button); return button
 
     def add_marker(self, marker=None, label=None):
-        row = self.markers.rowCount(); self.markers.insertRow(row)
-        self.markers.setItem(row, 0, QTableWidgetItem(str(marker) if marker else ''))
-        self.markers.setItem(row, 1, QTableWidgetItem(label or (f'Marker {marker}' if marker else '')))
+        if marker is None and self.visible_choices is not None:
+            self.add_visible_marker()
+            return
+        blocked = self.markers.blockSignals(True)
+        try:
+            row = self.markers.rowCount(); self.markers.insertRow(row)
+            item = QTableWidgetItem(str(marker) if marker is not None else '')
+            if self.visible_choices is not None:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.markers.setItem(row, 0, item)
+            self.markers.setItem(row, 1, QTableWidgetItem(label or (f'Marker {marker}' if marker is not None else '')))
+        finally:
+            self.markers.blockSignals(blocked)
+        if not blocked:
+            self.refresh_choices()
+
+    def add_visible_marker(self):
+        visible = self.visible_choices()
+        try:
+            existing = self.marker_names()
+        except ValueError as error:
+            self.error.setText(str(error)); return
+        available = {key: label for key, label in visible.items() if key not in existing}
+        if not available:
+            self.error.setText('Alle aktuell sichtbaren Instanzen sind bereits in der Markerliste. Unten „Vergleich hinzufügen“ wählen.')
+            return
+        labels = [f'{label} ({key})' for key, label in available.items()]
+        selected, accepted = QInputDialog.getItem(self, 'Sichtbaren Marker hinzufügen', 'Instanz', labels, 0, False)
+        if accepted:
+            key = list(available)[labels.index(selected)]
+            self.choice_snapshot = visible
+            self.add_marker(key, available[key])
 
     def remove_rows(self, table):
         for row in sorted({i.row() for i in table.selectedIndexes()}, reverse=True):
@@ -113,6 +150,8 @@ class ProfileDialog(QDialog):
             if not first or not second:
                 continue
             key = first.text().strip()
+            if not key or not second.text().strip():
+                continue
             if key in result:
                 raise ValueError('Marker-IDs dürfen nicht doppelt vorkommen.')
             result[key] = second.text().strip()
@@ -121,26 +160,39 @@ class ProfileDialog(QDialog):
     def fill_choice(self, combo, previous=None):
         if previous is None:
             previous = combo.currentData()
-        combo.clear(); combo.addItem('Bitte wählen', None)
         try:
             names = self.marker_names()
-        except ValueError:
-            names = {}
+        except ValueError as error:
+            self.error.setText(str(error))
+            return
+        combo.blockSignals(True)
+        combo.clear(); combo.addItem('Bitte wählen', None)
         for key, label in names.items():
             try:
                 selector = self.analysis.marker_selector(key)
             except ValueError:
                 continue
-            if self.visible_choices is None or key in self.visible_choices():
+            if self.choice_snapshot is None or key in self.choice_snapshot:
                 combo.addItem(f'{label} ({key})', selector)
+                combo.setItemData(combo.count()-1, f'{label} ({key})', Qt.ItemDataRole.ToolTipRole)
+        if previous is not None and combo.findData(previous) < 0:
+            combo.addItem(f'Nicht verfügbar · {names.get(str(previous), previous)} ({previous})', previous)
+            combo.model().item(combo.count()-1).setEnabled(False)
         selected = combo.findData(previous)
         combo.setCurrentIndex(max(0, selected))
+        combo.blockSignals(False)
 
     def refresh_choices(self, *_args):
+        try:
+            self.marker_names()
+        except ValueError as error:
+            self.error.setText(str(error)); return
         self.fill_choice(self.reference)
         for row in range(self.pairs.rowCount()):
             for col in (1, 2):
-                self.fill_choice(self.pairs.cellWidget(row, col))
+                combo = self.pairs.cellWidget(row, col)
+                if combo is not None:
+                    self.fill_choice(combo)
 
     def add_pair(self, value=None):
         value = value or {}
@@ -188,7 +240,10 @@ class ProfileDialog(QDialog):
             self.markers.setRowCount(0); self.pairs.setRowCount(0)
             names = profile['markers']
             if self.visible_choices is not None:
-                names = {key: names.get(key, label) for key, label in self.visible_choices().items()}
+                names = dict(names)
+                self.choice_snapshot = self.visible_choices()
+                for key, label in self.choice_snapshot.items():
+                    names.setdefault(key, label)
             for marker, label in names.items():
                 self.add_marker(marker, label)
         finally:
