@@ -294,7 +294,8 @@ class FreeAnalysisController(QObject):
         try:
             from .marker_selection import visible_marker_choices
             editor = ProfileDialog(self.window.project_root, profile, self.window,
-                                   visible_choices=lambda: visible_marker_choices(self.window))
+                                   visible_choices=(lambda: visible_marker_choices(self.window))
+                                   if self.window.status_store.get().connected else None)
             if editor.exec() == QDialog.DialogCode.Accepted:
                 save_profile(analysis.PROFILE_PATH, editor.saved_profile, analysis.validate_profile)
                 selected = self.window.project_root/'analysis_scripts/free_auswertung.py'
