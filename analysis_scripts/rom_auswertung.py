@@ -251,6 +251,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_in
     unseen = {}
     wanted = set(marker_ids)
     ambiguous = set()
+    geometry_tracks = {}
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         headers = set(reader.fieldnames or ())
@@ -293,6 +294,8 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_in
                     continue
             if marker_id not in wanted:
                 continue
+            if explicit_instances and isinstance(marker_id, int) and row.get('tracking_id', '').strip():
+                geometry_tracks.setdefault(marker_id, set()).add(row['tracking_id'].strip())
             if row.get("visible", "") != "1":
                 if row.get("visible", "") == "0":
                     unseen.setdefault(sample,set()).add(marker_id)
@@ -317,6 +320,12 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_in
 
     for sample, marker_id in ambiguous:
         frames[sample].pop(marker_id, None)
+    if explicit_instances:
+        for marker_id, tracks in geometry_tracks.items():
+            if len(tracks) > 1:
+                # Even non-overlapping tracking IDs must not be spliced into one object.
+                for poses in frames.values():
+                    poses.pop(marker_id, None)
 
     complete = [
         (frame_times[key], poses)
