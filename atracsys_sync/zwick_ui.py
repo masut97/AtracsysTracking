@@ -163,6 +163,11 @@ class ZwickController(QObject):
         try:
             values=control.values()
             action=self.gate.action(values,self.busy())
+            # Acknowledge only after observing both reset signals and arming the gate.
+            reset_token = values.get('StartResetToken', '')
+            if (action == 'idle' and self.gate.armed and not self.busy()
+                    and reset_token and values.get('StartResetAck') != reset_token):
+                control._write('StartResetAck', reset_token, control.registry.REG_SZ)
             if action=='stop':
                 self.stop(); control.write_start_record(False); control.clear_stop()
             elif action=='start':
@@ -194,6 +199,7 @@ class ZwickController(QObject):
             error=self.error or stats.last_error
             if action in {'start','stop'} or time.monotonic()-self.last_status>=1:
                 control.write_status(state,last_recording=stats.csv_path if not self.busy() else '',last_error=error)
+                control._write('StartResetSupported', 1, control.registry.REG_DWORD)
                 guard = getattr(w, 'camera_guard', None)
                 control._write('CameraReady', int(bool(guard and guard.ready())), control.registry.REG_DWORD)
                 if control.last_error:

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Start','Stop','Finalize','Plan','Prepare')][string]$Action,
+    [ValidateSet('Start','Stop','Finalize','Plan','Prepare','Abort')][string]$Action,
     [string]$Root = 'C:\Users\Zwick Biaxial\Documents\Spine_Tester_Red',
     [string]$ControlPath = 'HKCU:\Software\AtracsysTracking\Control',
     [int]$FrequencyHz = 0,
@@ -43,6 +43,18 @@ function Get-Plan {
     [pscustomobject]@{Name=$name;Mode=$match.Groups[1].Value.ToUpperInvariant();Directory=$exports;TRA=(Join-Path $exports ($name+'.tra'));CSV=(Join-Path $exports ($name+'.csv'))}
 }
 try {
+    if ($Action -eq 'Abort') {
+        # End-event hook: request a normal recorder stop without blocking testXpert
+        # or requiring a session/TRA/ROM report. Repeated idle calls are harmless.
+        if (Test-Path -LiteralPath $ControlPath) {
+            $s = Read-Control
+            if ($s.RecordingState -in @('Aufnahme','Vorbereitung')) {
+                Write-Value 'StartRecord' 0 'DWord'
+                Write-Value 'StopRecord' 1 'DWord'
+            }
+        }
+        exit 0
+    }
     if ($Action -eq 'Plan') { Get-Plan | ConvertTo-Json; exit 0 }
     if ($Action -eq 'Prepare') {
         $launcher = 'C:\Users\Public\Documents\AtracsysTracking\Start-Atracsys.ps1'
@@ -94,12 +106,24 @@ try {
         $session | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Root 'ZwickCoupling\session.json') -Encoding UTF8
         Write-Value 'StartRecord' 0 'DWord'
         Write-Value 'StopRecord' 0 'DWord'
-        Start-Sleep -Milliseconds 600
+        $resetToken = [guid]::NewGuid().ToString('N')
+        if ($s.StartResetSupported -eq 1) { Write-Value 'StartResetToken' $resetToken }
         Write-Value 'RecordingName' $plan.Name
         Write-Value 'RecordingDirectory' $exports
         if($FrequencyHz -gt 0){Write-Value 'RecordingFrequencyHz' $selectedFrequency}
         Write-Value 'ZwickFile' $plan.TRA
         Write-Value 'Movement' $plan.Mode
+        if ($s.StartResetSupported -eq 1) {
+            $resetDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            do {
+                if ((Read-Control).StartResetAck -eq $resetToken) { break }
+                if ([DateTime]::UtcNow -ge $resetDeadline) { throw 'Atracsys did not acknowledge start reset. No recording requested.' }
+                Start-Sleep -Milliseconds 20
+            } while ($true)
+        } else {
+            # Compatibility with app versions without explicit reset acknowledgement.
+            Start-Sleep -Milliseconds 600
+        }
         Write-Value 'StartedAtUnixMs' ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) 'QWord'
         Write-Value 'CouplingState' 'Preparing'
         $startRequested = $true

@@ -333,7 +333,7 @@ class ScriptPanel(QGroupBox):
             for source in self.group.sources:
                 source.submit(tick)
             from .camera_health import sources_stable, WARMUP_SECONDS
-            if (self.pending is not None and now - self.ready_at >= WARMUP_SECONDS
+            if (self.pending is not None and (not self.group.sources or now - self.ready_at >= WARMUP_SECONDS)
                     and sources_stable(reports) and self.window.camera_guard.ready()):
                 args, kwargs = self.pending
                 self.pending = None

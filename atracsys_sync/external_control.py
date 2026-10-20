@@ -107,7 +107,8 @@ class RegistryControl:
     def defaults(self):
         return dict(StartRecord=0, StopRecord=0, RecordingFrequencyHz=str(self.default_frequency_hz),
             RecordingName='', RecordingDirectory='', AppReady=0, RecordingState='Gestoppt',
-            LastRecording='', LastError='', HeartbeatUnixMs=0)
+            LastRecording='', LastError='', HeartbeatUnixMs=0,
+            StartResetToken='', StartResetAck='', StartResetSupported=0)
 
     def ensure_defaults(self):
         if not self.enabled:

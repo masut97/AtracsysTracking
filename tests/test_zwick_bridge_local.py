@@ -37,6 +37,64 @@ def invoke(root, action, *extra):
         capture_output=True,text=True,timeout=15)
 
 
+@pytest.mark.parametrize('state,expected_stop', [('Aufnahme',1),('Vorbereitung',1),('Gespeichert',0),('Gestoppt',0)])
+def test_abort_requests_stop_only_when_active_without_session(tmp_path,state,expected_stop):
+    import winreg
+    name='Software\\AtracsysTracking\\BridgeTest_'+uuid.uuid4().hex
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,name) as key:
+        winreg.SetValueEx(key,'RecordingState',0,winreg.REG_SZ,state)
+        winreg.SetValueEx(key,'StartRecord',0,winreg.REG_DWORD,0)
+        winreg.SetValueEx(key,'StopRecord',0,winreg.REG_DWORD,0)
+    try:
+        result=invoke(tmp_path,'Abort','-ControlPath','HKCU:\\'+name)
+        assert result.returncode==0,result.stderr
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,name) as key:
+            assert winreg.QueryValueEx(key,'StartRecord')[0]==0
+            assert winreg.QueryValueEx(key,'StopRecord')[0]==expected_stop
+        assert not (tmp_path/'ZwickCoupling/session.json').exists()
+    finally:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER,name)
+
+
+def test_start_waits_for_reset_ack_before_raising_start(tmp_path):
+    import threading
+    import time
+    import winreg
+    name='Software\\AtracsysTracking\\BridgeTest_'+uuid.uuid4().hex
+    (tmp_path/'Exports').mkdir()
+    (tmp_path/'ExperimentName.txt').write_text('Synthetic_FE_test')
+    done=threading.Event()
+    observed=[]
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,name) as key:
+        for field,value,kind in [('AppReady',1,winreg.REG_DWORD),
+                ('HeartbeatUnixMs',int((time.time()+60)*1000),winreg.REG_QWORD),
+                ('RecordingState','Bereit',winreg.REG_SZ),('RecordingFrequencyHz','50',winreg.REG_SZ),
+                ('StartResetSupported',1,winreg.REG_DWORD),('StartRecord',0,winreg.REG_DWORD)]:
+            winreg.SetValueEx(key,field,0,kind,value)
+    def emulate_app():
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,name,0,winreg.KEY_ALL_ACCESS) as key:
+            while not done.wait(.01):
+                try:
+                    token=winreg.QueryValueEx(key,'StartResetToken')[0]
+                except FileNotFoundError:
+                    continue
+                if not observed:
+                    observed.append(winreg.QueryValueEx(key,'StartRecord')[0])
+                    time.sleep(.1)
+                    observed.append(winreg.QueryValueEx(key,'StartRecord')[0])
+                    winreg.SetValueEx(key,'StartResetAck',0,winreg.REG_SZ,token)
+                if winreg.QueryValueEx(key,'StartRecord')[0]==1:
+                    winreg.SetValueEx(key,'RecordingState',0,winreg.REG_SZ,'Aufnahme')
+    thread=threading.Thread(target=emulate_app);thread.start()
+    try:
+        result=invoke(tmp_path,'Start','-ControlPath','HKCU:\\'+name)
+        assert result.returncode==0,result.stderr
+        assert observed==[0,0]
+    finally:
+        done.set();thread.join()
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER,name)
+
+
 def test_shared_name_skips_existing_csv_tra_and_sidecars(tmp_path):
     exports=tmp_path/'Exports'; exports.mkdir()
     (tmp_path/'ExperimentName.txt').write_text('Sample_a_FE_\n')
