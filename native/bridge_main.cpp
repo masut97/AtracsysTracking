@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "shared_protocol.hpp"
+#include "frame_policy.hpp"
 
 namespace {
 
@@ -307,6 +308,7 @@ int run_bridge(const Arguments& args, SharedMemory& shared, HANDLE stop_event, L
     SetDllDirectoryW(sdk_bin.c_str());
     std::int64_t image_sequence = 0;
     while (WaitForSingleObject(stop_event, 0) != WAIT_OBJECT_0) {
+        shared.header()->reserved0 = 0;
         shared.header()->state = static_cast<std::uint32_t>(BridgeState::Reconnecting);
         ftkBuffer init_errors{};
         ftkLibrary library = ftkInitExt(nullptr, &init_errors);
@@ -357,6 +359,8 @@ int run_bridge(const Arguments& args, SharedMemory& shared, HANDLE stop_event, L
         log.write("Bridge verbunden");
         int consecutive_errors = 0;
         int no_frame_count = 0;
+        std::uint64_t overflow_count = 0;
+        auto overflow_log = Clock::now();
         bool first_call = true;
         bool have_pose_counter = false;
         std::uint32_t last_pose_counter = 0;
@@ -374,6 +378,12 @@ int run_bridge(const Arguments& args, SharedMemory& shared, HANDLE stop_event, L
                 first_call = false;
             }
             if (status == ftkError::FTK_OK && frame->imageHeaderStat == ftkQueryStatus::QS_OK) {
+                if (overflow_count) {
+                    log.write("Segmentation recovered without reconnect; SDK overflow responses: " + std::to_string(overflow_count));
+                    overflow_count = 0;
+                    shared.header()->last_error[0] = '\0';
+                }
+                shared.header()->reserved0 = 0;
                 consecutive_errors = 0;
                 no_frame_count = 0;
                 const auto counter = frame->imageHeader->counter;
@@ -393,6 +403,27 @@ int run_bridge(const Arguments& args, SharedMemory& shared, HANDLE stop_event, L
                 }
                 continue;
             }
+            static_assert(static_cast<int>(ftkError::FTK_ERR_SEG_OVERFLOW) == 13);
+            if (recoverable_image_error(static_cast<int>(status))) {
+                ++overflow_count;
+                no_frame_count = 0;
+                shared.header()->native_dropped_frames++;
+                // Liveness is NOT a new measurement. Never publish an invalid
+                // frame, reuse its counters, or stamp an old pose as current.
+                shared.header()->heartbeat_ns = monotonic_ns();
+                MemoryBarrier();
+                shared.header()->reserved0 = kSegmentationOverflow;
+                copy_text(shared.header()->last_error, sizeof(shared.header()->last_error),
+                          "SEGMENTATION_OVERFLOW: invalid image discarded; waiting for valid camera frames");
+                auto now = Clock::now();
+                if (overflow_count == 1 || now - overflow_log >= std::chrono::seconds(1)) {
+                    log.write("Segmentation overflow; connection retained; SDK overflow responses: " + std::to_string(overflow_count));
+                    overflow_log = now;
+                }
+                if (WaitForSingleObject(stop_event, 20) == WAIT_OBJECT_0) break;
+                continue;
+            }
+            shared.header()->reserved0 = 0;
             if (status == ftkError::FTK_WAR_NO_FRAME) {
                 if (++no_frame_count % 40 == 0) log.write("Noch kein Kameraframe (FTK_WAR_NO_FRAME)");
                 if (no_frame_count < 120) {

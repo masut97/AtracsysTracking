@@ -1,4 +1,5 @@
 #include "shared_protocol.hpp"
+#include "frame_policy.hpp"
 
 #include <cstring>
 #include <iostream>
@@ -13,6 +14,11 @@ static_assert(sizeof(MarkerRecord) == 76);
 static_assert(sizeof(ImageSlotMeta) == 32340);
 static_assert(sizeof(PoseSlot) == 9760);
 static_assert(offsetof(SharedHeader, heartbeat_ns) == 72);
+static_assert(offsetof(SharedHeader, reserved0) == 36);
+static_assert(recoverable_image_error(13));
+static_assert(!recoverable_image_error(0));
+static_assert(!recoverable_image_error(1));
+static_assert(!recoverable_image_error(14));
 static_assert(offsetof(ImageSlotMeta, device_timestamp_us) == 60);
 static_assert(offsetof(ImageSlotMeta, computer_monotonic_ns) == 68);
 static_assert(offsetof(PoseSlot, device_timestamp_us) == 16);

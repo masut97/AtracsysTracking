@@ -1,7 +1,7 @@
 # Native Atracsys bridge
 
-`bridge_main.cpp` and `shared_protocol.hpp` are the recovered original bridge
-source, unchanged. Creation was recorded on 2026-08-03; the latest recovered
+The original versions of `bridge_main.cpp` and `shared_protocol.hpp` were recovered
+from the original bridge source. Creation was recorded on 2026-08-03; the latest recovered
 bridge change was recorded on 2026-08-04. A fresh local build on 2026-10-20
 reproduced the currently deployed bridge **byte for byte except for the Microsoft
 Rich build header and the PE/linker debug timestamps**. This is stronger evidence
@@ -69,3 +69,31 @@ or synchronization semantics. Matching the existing binary does not establish
 that it has no bugs or replace a separately authorized hardware acceptance test.
 Physical synchronization still requires a hardware trigger. Measurements,
 calibration and deployed installations remain untouched.
+
+## Segmentation overflow recovery change
+
+The working source now treats `FTK_ERR_SEG_OVERFLOW` (13) as an invalid optical
+observation, not a transport failure. It discards the query without publishing
+image/pose samples and continues polling the same SDK connection. Logs are rate
+limited. The reserved v2 header word at byte 36 carries `0x5347000d` only while
+overflow responses continue; heartbeat progress demonstrates native-loop liveness.
+No existing wire offsets, counters or measurement timestamp semantics change.
+SDK error responses are not asserted to be distinct physical camera frames.
+
+Python only tolerates this condition while the process is alive, the header is
+Running, and the heartbeat advances. A frozen/dead/reconnecting bridge still
+triggers recovery. During a recording, the interruption is explicitly stored in
+metadata; no old poses or interpolated observations are written to fill it.
+
+This change requires the matching full development SDK (the APIs include
+`ftkMarker64Fiducials` and `ftkRegisterRigidBody`). The older system SDK headers on
+the measurement PC cannot build this source. Runtime DLLs/Python wrappers alone
+do not provide the required C++ headers/import libraries. Do not adapt the ABI by
+guessing structures or deploy a build against incompatible headers.
+
+`verification.json` documents the recovered ORIGINAL binary, not the modified
+overflow implementation. A fresh build plus synthetic tests and an authorized
+hardware acceptance test are required before claiming the new behavior works on
+the camera. The source-only automatic updater preserves the installed native
+binary; `tools/install_local_bridge_update.py` stages a separately built and
+SHA-256-checked bridge into a new local runtime, never into the running App.

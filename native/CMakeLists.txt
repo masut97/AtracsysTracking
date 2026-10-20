@@ -13,7 +13,7 @@ set(ATRACSYS_SDK_ROOT "C:/Program Files/Atracsys/fusionTrack SDK x64"
 set(Atracsys_DIR "${ATRACSYS_SDK_ROOT}/cmake/Atracsys")
 find_package(Atracsys REQUIRED COMPONENTS SDK)
 
-add_executable(atracsys_bridge bridge_main.cpp shared_protocol.hpp)
+add_executable(atracsys_bridge bridge_main.cpp shared_protocol.hpp frame_policy.hpp)
 target_link_libraries(atracsys_bridge PRIVATE Atracsys::SDK)
 target_compile_definitions(atracsys_bridge PRIVATE UNICODE _UNICODE)
 

@@ -69,6 +69,7 @@ def install():
                 self._camera_epoch = health["epoch"]
                 self._camera_last_sample = time.monotonic()
                 self._camera_abort = False
+                self._overflow_interval_open = False
                 self._sync_ticks = {}
                 result = start_original(self, *args, **kwargs)
                 if group is not None:
