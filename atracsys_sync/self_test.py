@@ -243,6 +243,27 @@ def run(output: Path):
             QTimer.singleShot(200, protect(finish_second))
 
         def capture_tabs_and_stop():
+            from dataclasses import replace
+            states = tuple(self.marker_registry.states())
+            first = next(state for state in states if state.visible)
+            sibling = replace(first, identity_id=first.identity_id+100000,
+                              pose=replace(first.pose, tracking_id=first.pose.tracking_id+100000))
+            self._sync_marker_cards(states+(sibling,))
+            assert first.identity_key in self._marker_cards
+            assert sibling.identity_key in self._marker_cards
+            self._remove_marker(first.identity_key)
+            self._sync_marker_cards(states+(sibling,))
+            assert first.identity_key not in self._marker_cards
+            assert sibling.identity_key in self._marker_cards
+            assert first.pose.geometry_id not in self._dismissed_geometry_ids
+            assert self.restore_markers_button.isVisible()
+            assert self.recorder.stats().state != 'Gestoppt'
+            self._remove_marker(sibling.identity_key)
+            self._restore_removed_markers()
+            assert first.identity_key in self._marker_cards
+            assert sibling.identity_key not in self._marker_cards
+            assert not self._dismissed_markers
+
             def capture_analysis():
                 capture("analysis.png")
                 assert self.findChild(QPushButton, "softwareUpdateButton") is not None

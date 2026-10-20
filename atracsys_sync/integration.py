@@ -24,6 +24,8 @@ def install():
         return
     main_window.WindowsRegistryControl = RegistryControl
     validate_tracker_contract(recording, MainWindow, NativeBridgeAdapter)
+    from .instance_visibility import install as install_instance_visibility
+    install_instance_visibility(MainWindow)
 
     start_original = Worker.start_session
     enqueue_original = Worker.enqueue
