@@ -96,7 +96,7 @@ def run(output: Path):
             rotation=np.eye(3)) for v in synthetic_signal) for marker in (340,341,342)}
         synthetic_curves, _ = toggling_motion(
             SimpleNamespace(times_s=synthetic_t, poses=synthetic_poses), 340,341,342,[0,0,50],0)
-        np.testing.assert_allclose(synthetic_curves['compensated_screw_head'][:,0], synthetic_signal, atol=1e-10)
+        np.testing.assert_allclose(synthetic_curves['compensated_screw_point'][:,0], synthetic_signal, atol=1e-10)
         assert any(row['accepted'] for row in toggling_cycles(synthetic_t, synthetic_curves, 2)['rows'])
         profiles.setChecked(True)
         expanded = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
@@ -365,6 +365,19 @@ def run(output: Path):
             by_index[index] = row
         manifest = json.loads(csv_path.with_suffix(".scripts.json").read_text(encoding="utf-8"))
         tracker_metadata = json.loads(csv_path.with_suffix(".json").read_text(encoding="utf-8"))
+        import hashlib
+        for suffix in ('', '_second'):
+            metadata = json.loads((output/(recording_name+suffix+'.json')).read_text(encoding='utf-8'))
+            context = metadata['coordinate_context']
+            assert 'error' not in context, context
+            assert context['geometry_sha256']
+            for name, digest in context['geometry_sha256'].items():
+                assert digest == hashlib.sha256((root/'geometries'/name).read_bytes()).hexdigest()
+            local_setup = root/'analysis_scripts/toggling_config.local.json'
+            if local_setup.is_file():
+                assert context['toggling_setup'] == json.loads(local_setup.read_text(encoding='utf-8'))
+                from toggling_auswertung import verify_coordinate_frame
+                assert verify_coordinate_frame(output/(recording_name+suffix+'.csv'), context['toggling_setup'])
         assert manifest["state"] == "complete", manifest
         expected_scripts = len([spec for spec in windows[0].script_panel.specs if spec.simulated])
         assert expected_scripts >= 1, "Kein Demo-Messskript installiert"
@@ -398,6 +411,7 @@ def run(output: Path):
                   "marker_footer_visible_in_all_tabs": True,
                   "curated_analysis_selection_and_profile_toggle": True,
                   "toggling_synthetic_point_motion_and_cycles": True,
+                  "recorded_coordinate_context": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

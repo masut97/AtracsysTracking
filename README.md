@@ -33,7 +33,7 @@ der kopierbare und änderbare Registry-Pfad sowie Updates stehen unter
 
 Für das Toggling-Setup mit 340/341/342 gibt es eine eigene punktbezogene
 Auswertung mit Knochenkompensation, Zeitkurven und Zykluswerten:
-[Toggling – Einrichtung und Methoden](TOGGLING.md). Das Schraubenkopfzentrum muss
+[Toggling – Einrichtung und Methoden](TOGGLING.md). Der konkrete Auswertepunkt muss
 vor der ersten Auswertung im lokalen Marker-Koordinatensystem definiert werden.
 
 Die normale Liste bietet **Automatisch erkennen**, **ROM**, **Trochanter**, **Toggling** und

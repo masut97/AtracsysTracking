@@ -72,6 +72,10 @@ def install():
                 self._overflow_interval_open = False
                 self._sync_ticks = {}
                 result = start_original(self, *args, **kwargs)
+                root = getattr(self, '_coordinate_project_root', None)
+                if root is not None:
+                    from .coordinate_context import snapshot
+                    self._metadata['coordinate_context'] = snapshot(root, self._metadata.get('geometry_files', ()))
                 if group is not None:
                     self._script_started_counter = time.perf_counter()
                     group.begin_recording(self._csv_path, self._session_id, self._script_started_counter)
@@ -131,6 +135,7 @@ def install():
     def init_window(self, *args, **kwargs):
         window_init(self, *args, **kwargs)
         self.recorder._camera_source = self.acquisition
+        self.recorder._coordinate_project_root = self.project_root
         self.camera_guard = CameraGuard(self)
         self.script_panel = ScriptPanel(self, window_start)
         self.centralWidget().layout().insertWidget(3, self.script_panel)

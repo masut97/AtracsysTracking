@@ -1,4 +1,4 @@
-"""Toggling: screw-head and bone motion, with full rigid-body compensation."""
+"""Toggling: a defined screw point and bone motion, with rigid-body compensation."""
 import argparse
 import csv
 import html
@@ -13,29 +13,66 @@ import rom_auswertung as tracking
 from _lib.toggling import motion, cycles
 from _lib.rom_presentation import CSS, SVG_STYLE
 
-LABELS = {'screw_head': 'Screw-head centre relative to reference',
+LABELS = {'screw_point': 'Defined screw point relative to reference',
           'bone': 'Bone marker relative to reference',
-          'compensated_screw_head': 'Screw-head centre relative to bone (bone motion removed)'}
+          'compensated_screw_point': 'Defined screw point relative to bone (bone motion removed)'}
 COLUMNS = ('x_mm', 'y_mm', 'z_mm', 'rx_deg', 'ry_deg', 'rz_deg')
 
 
-def load_settings(config=None, point=None):
+def load_settings(config=None, point=None, recorded=None):
     path = Path(config) if config else Path(__file__).with_name('toggling_config.local.json')
-    settings = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
+    settings = (recorded if recorded is not None else
+                json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else {})
     if not isinstance(settings, dict):
         raise ValueError('Toggling configuration must be an object.')
     settings = {**dict(reference=340, bone=341, screw=342, baseline_seconds=1.), **settings}
+    settings.setdefault('point_name', 'Defined screw point')
+    if not isinstance(settings['point_name'], str) or not 1 <= len(settings['point_name'].strip()) <= 80:
+        raise ValueError('A point_name of 1–80 characters is required.')
+    for key in ('screw_length_mm', 'free_length_mm', 'head_to_holder_exit_mm'):
+        value = settings.get(key)
+        if value is not None and (type(value) not in (int, float) or not np.isfinite(value) or value < 0):
+            raise ValueError(key+' must be a finite nonnegative length in mm or null.')
     if point is not None:
         settings['screw_point_mm'] = list(point)
     value = settings.get('screw_point_mm')
     if value is None:
-        raise ValueError('Screw-head location is not configured. Supply --screw-point-mm X Y Z in the recorded screw-marker coordinates. No marker-origin substitution is allowed.')
+        raise ValueError('Screw point is not configured. Supply --screw-point-mm X Y Z in the recorded screw-marker coordinates. No marker-origin substitution is allowed.')
     if np.asarray(value).shape != (3,) or not np.isfinite(np.asarray(value, dtype=float)).all():
         raise ValueError('screw_point_mm must contain three finite coordinates in mm.')
     ids = [settings[key] for key in ('reference', 'bone', 'screw')]
     if any(type(i) is not int or i <= 0 for i in ids) or len(set(ids)) != 3:
         raise ValueError('Reference, bone and screw need three distinct positive marker IDs.')
     return settings
+
+
+def recording_context(source):
+    sidecar = Path(source).with_suffix('.json')
+    if not sidecar.is_file():
+        return {}
+    metadata = json.loads(sidecar.read_text(encoding='utf-8-sig'))
+    if not isinstance(metadata, dict):
+        raise ValueError('Recording sidecar must be an object.')
+    context = metadata.get('coordinate_context', {})
+    if not isinstance(context, dict):
+        raise ValueError('Invalid coordinate context in the recording sidecar.')
+    return context
+
+
+def verify_coordinate_frame(source, settings):
+    expected = settings.get('screw_geometry_sha256')
+    if expected is None:
+        return False
+    if not isinstance(expected, str) or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected):
+        raise ValueError('screw_geometry_sha256 must be a lowercase SHA-256 fingerprint.')
+    context = recording_context(source)
+    filename = settings.get('screw_geometry_file', f'geometry{settings["screw"]}.json5')
+    fingerprints = context.get('geometry_sha256', {})
+    if not isinstance(fingerprints, dict) or context.get('error') or fingerprints.get(filename) != expected:
+        raise ValueError('Recorded screw geometry is not verified against the configured point. '
+                         'Do not apply a new CAD origin to older recordings. Use the correct historical coordinate definition; '
+                         'existing measurements are preserved and were not reinterpreted.')
+    return True
 
 
 def figure_svg(title, x, values, xlabel, gaps=()):
@@ -55,6 +92,7 @@ def figure_svg(title, x, values, xlabel, gaps=()):
 
 def analyze(source, settings, output=None, expected_frequency=None):
     source = Path(source).resolve()
+    geometry_verified = verify_coordinate_frame(source, settings)
     ids = [settings[key] for key in ('reference', 'bone', 'screw')]
     try:
         data = tracking._load_current_tracking(source, ids, explicit_instances=True)
@@ -76,6 +114,12 @@ def analyze(source, settings, output=None, expected_frequency=None):
     t = t+offset
     cyclic = cycles(t, values, expected_frequency)
     issues = []
+    if not geometry_verified:
+        issues.append('No recorded geometry fingerprint was bound to this point configuration. Verify the recorded coordinate definition before interpreting point displacements.')
+    if settings.get('marker_attachment') != 'rigid_screw_shaft':
+        issues.append('Rigid attachment to the screw shaft is not documented. Check attachment and any mobile head connection before interpreting screw/bone motion.')
+    if settings.get('free_length_mm') is None or settings.get('head_to_holder_exit_mm') is None:
+        issues.append('Free length/grip position is not documented. Record both before comparing different screws or gripping positions; displacement at different physical points and load lever arms is not directly interchangeable.')
     if data.incomplete_samples:
         issues.append(f'{data.incomplete_samples} received frames lack required valid marker poses. Check visibility, rigid fixation and marker IDs; excluded observations were not filled in.')
     if data.invalid_samples:
@@ -103,11 +147,12 @@ def analyze(source, settings, output=None, expected_frequency=None):
     pages = []
     accepted = [r for r in cyclic['rows'] if r['accepted']]
     for key, v in values.items():
+        label = LABELS[key].replace('Defined screw point', settings['point_name'])
         with (output/(key+'_motion.csv')).open('w', encoding='utf-8-sig', newline='') as stream:
             writer = csv.writer(stream); writer.writerow(['time_s', *COLUMNS]); writer.writerows(zip(t, *v.T))
-        raw_svg = figure_svg(LABELS[key]+' — raw, unfiltered', t, v, 'Time (s)', gaps)
+        raw_svg = figure_svg(label+' — raw, unfiltered', t, v, 'Time (s)', gaps)
         (output/(key+'_motion.svg')).write_text(raw_svg, encoding='utf-8')
-        sections = [f'<h2>{html.escape(LABELS[key])}</h2>', raw_svg]
+        sections = [f'<h2>{html.escape(label)}</h2>', raw_svg]
         if accepted:
             numbers, raw, filtered = [], [], []
             previous = None
@@ -118,7 +163,7 @@ def analyze(source, settings, output=None, expected_frequency=None):
                     numbers.append(float('nan')); raw.append([float('nan')]*6); filtered.append([float('nan')]*6)
                 numbers.append(r['cycle']); raw.append(r['raw'][key]); filtered.append(r['filtered'][key]); previous = r
             for name, arr in [('raw', raw), ('filtered', filtered)]:
-                svg = figure_svg(LABELS[key]+f' — {name} maximum minus minimum per cycle', numbers, np.array(arr), 'Detected cycle candidate')
+                svg = figure_svg(label+f' — {name} maximum minus minimum per cycle', numbers, np.array(arr), 'Detected cycle candidate')
                 (output/(key+'_'+name+'_cycles.svg')).write_text(svg, encoding='utf-8')
                 sections.append(f'<details><summary>{name.title()} peak-to-peak by cycle</summary>{svg}</details>')
         pages.append('<section class="card">'+''.join(sections)+'</section>')
@@ -134,6 +179,7 @@ def analyze(source, settings, output=None, expected_frequency=None):
                   baseline_samples=baseline_count, complete_samples=len(t), incomplete_samples=data.incomplete_samples,
                   invalid_rows=data.invalid_samples, issues=issues, gap_bands=gaps, cycles=cyclic,
                   force_based_metrics_available=False, protocol_approval=False,
+                  screw_coordinate_frame_verified=geometry_verified,
                   coordinates='Recorded CAD marker axes; old local marker transforms are not applied.',
                   point='screw_point_mm in recorded screw-marker coordinates; rigid attachment is required',
                   time_origin='original elapsed recording time' if elapsed else 'first recorded frame',
@@ -149,7 +195,11 @@ def analyze(source, settings, output=None, expected_frequency=None):
            f'<p>{len(t)} complete samples; {len(accepted)} accepted optical cycle candidates.</p>'
            '<h3>Observed problems and corrective actions</h3><ul>'+problem_html+'</ul>'
            '<p>These are kinematic measurements, not a loosening/failure approval. Force, stiffness and hysteresis require an independently aligned force signal.</p>'
-           f'<p>Screw-head point in marker coordinates (mm): {html.escape(str(settings["screw_point_mm"]))}.</p></section>'+
+           f'<p>{html.escape(settings["point_name"])} in marker coordinates (mm): {html.escape(str(settings["screw_point_mm"]))}.</p>'
+           f'<p>Screw length: {html.escape(str(settings.get("screw_length_mm")))} mm; '
+           f'free length: {html.escape(str(settings.get("free_length_mm")))} mm; '
+           f'head-to-holder-exit distance: {html.escape(str(settings.get("head_to_holder_exit_mm")))} mm. '
+           'None means not documented, never zero.</p></section>'+
            ''.join(pages)+'<section class="card"><h2>Methods and limitations</h2>'
            '<p>Raw motion is unfiltered. Cycle CSVs contain both raw extrema and fourth-order forward/backward Butterworth low-pass extrema. '
            'The cutoff is three times the measured cycle frequency, capped at 40% of the sample rate. '
@@ -157,7 +207,7 @@ def analyze(source, settings, output=None, expected_frequency=None):
            'One period near each segment edge is excluded. Raw extrema use the original observations. '
            'Cycle timing is inferred from optical motion; machine cycle numbers and missing cycles are unknown. '
            'A weak or absent periodic relative signal does not establish screw stability or failure.</p>'
-           '<p>Head displacement includes any motion between the marker and screw shank. A polyaxial/mobile head or loose mount can confound bone-interface interpretation. '
+           '<p>Point displacement includes any motion between the marker and screw shank. A polyaxial/mobile head or loose mount can confound bone-interface interpretation. '
            'Changing the virtual point changes translation through its lever arm; rotation is point-independent. '
            'Do not interpret XYZ as anatomical/loading axes until the CAD axes have been checked.</p>'
            '<p>Export: <a href="cycles.csv">Cycle table</a> · <a href="report.json">Analysis record</a>. SVG figures are saved beside this report.</p>'
@@ -176,7 +226,8 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path)
     parser.add_argument('--no-open', action='store_true')
     args = parser.parse_args(argv)
-    page = analyze(args.input, load_settings(args.config, args.screw_point_mm), args.output_dir, args.frequency)
+    recorded = recording_context(args.input).get('toggling_setup') if args.config is None and args.screw_point_mm is None else None
+    page = analyze(args.input, load_settings(args.config, args.screw_point_mm, recorded), args.output_dir, args.frequency)
     print(json.dumps({'status': 'ok', 'figure_html': str(page)}))
     if not args.no_open:
         webbrowser.open(page.resolve().as_uri())

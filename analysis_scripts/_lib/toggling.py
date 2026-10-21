@@ -50,9 +50,9 @@ def motion(data, reference, bone, screw, point_mm, baseline_seconds=1.):
         rotation = Rotation.from_matrix(delta).as_rotvec(degrees=True) @ basis.T
         return np.column_stack((translation, rotation))
 
-    curves = {'screw_head': change(head_ref, screw_ref),
+    curves = {'screw_point': change(head_ref, screw_ref),
               'bone': change(bone_ref, bone_rotation_ref),
-              'compensated_screw_head': change(head_bone, screw_bone, basis)}
+              'compensated_screw_point': change(head_bone, screw_bone, basis)}
     return curves, count
 
 
@@ -75,7 +75,7 @@ def cycles(t, curves, expected_frequency=None):
         return {'reason': 'No sufficiently long continuous segment; restore marker visibility/acquisition.', 'rows': []}
     # Frequency identification uses a single uninterrupted region only.
     grid = np.arange(t[longest[0]], t[longest[-1]], 1/fs)
-    data = curves['compensated_screw_head']
+    data = curves['compensated_screw_point']
     best = None
     lower, upper = ((.7*expected_frequency, 1.3*expected_frequency) if expected_frequency
                     else (.3, min(12., .15*fs)))
@@ -109,7 +109,7 @@ def cycles(t, curves, expected_frequency=None):
         if len(grid) < 32:
             continue
         filtered = {key: sosfiltfilt(lowpass, v, axis=0) for key, v in sampled.items()}
-        timing = sosfiltfilt(timing_filter, sampled['compensated_screw_head'][:, channel])
+        timing = sosfiltfilt(timing_filter, sampled['compensated_screw_point'][:, channel])
         if np.ptp(timing) < 1e-8:
             continue
         peaks, _ = find_peaks(timing, distance=max(1, int(.65*fs/frequency)), prominence=.15*np.ptp(timing))

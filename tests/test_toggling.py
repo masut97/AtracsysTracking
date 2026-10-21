@@ -42,8 +42,8 @@ def test_rotation_moves_virtual_head_through_lever_arm():
     positions = {m: np.zeros((len(t), 3)) for m in rotations}
     result, _ = motion(observations(t, positions, rotations), 340, 341, 342, [100, 0, 0], 0)
     expected = np.column_stack((100*np.cos(np.deg2rad(t*10))-100, 100*np.sin(np.deg2rad(t*10)), np.zeros(len(t))))
-    np.testing.assert_allclose(result['compensated_screw_head'][:, :3], expected, atol=1e-10)
-    np.testing.assert_allclose(result['compensated_screw_head'][:, 5], t*10, atol=1e-10)
+    np.testing.assert_allclose(result['compensated_screw_point'][:, :3], expected, atol=1e-10)
+    np.testing.assert_allclose(result['compensated_screw_point'][:, 5], t*10, atol=1e-10)
 
 
 def test_cycle_extrema_and_gaps_are_not_filled():
@@ -55,13 +55,13 @@ def test_cycle_extrema_and_gaps_are_not_filled():
     assert len(good) >= 20
     assert result['segments'] == 2
     assert all(r['end_s'] < 9 or r['start_s'] > 11 for r in good)
-    assert abs(np.median([r['raw']['screw_head'][0] for r in good])-.8) < .02
+    assert abs(np.median([r['raw']['screw_point'][0] for r in good])-.8) < .02
     assert {r['segment'] for r in good} == {1, 2}
 
 
 def test_no_periodic_motion_does_not_create_cycles():
     t = np.arange(0., 10., .01)
-    result = cycles(t, {'compensated_screw_head': np.zeros((len(t), 6))})
+    result = cycles(t, {'compensated_screw_point': np.zeros((len(t), 6))})
     assert not result['rows']
     assert 'No reliable periodic' in result['reason']
 
@@ -94,12 +94,12 @@ def test_complete_report_uses_unique_output_and_preserves_input(tmp_path):
     page = report.analyze(source, settings, tmp_path/'results', 2)
     document = page.read_text(encoding='utf-8')
     record = json.loads((page.parent/'report.json').read_text())
-    assert 'Screw-head centre relative to bone' in document
+    assert 'Defined screw point relative to bone' in document
     assert record['complete_samples'] == 1000
     assert record['cycles']['rows']
     assert source.read_bytes() == before
     assert report.analyze(source, settings, tmp_path/'results', 2).parent != page.parent
-    assert float(next(csv.DictReader((page.parent/'screw_head_motion.csv').open(encoding='utf-8-sig')))['time_s']) == 5
+    assert float(next(csv.DictReader((page.parent/'screw_point_motion.csv').open(encoding='utf-8-sig')))['time_s']) == 5
 
 
 def test_auto_dispatches_toggling_markers_without_running_other_analyses(tmp_path, monkeypatch):
