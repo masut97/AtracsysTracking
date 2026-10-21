@@ -315,14 +315,14 @@ def run(output: Path):
 
         def wait_for_recording():
             stats = self.recorder.stats()
-            if stats.state != "Gestoppt" and stats.frame_count >= 20:
+            if stats.state != "Gestoppt" and stats.frame_count >= 20 and any(state.visible for state in self.marker_registry.states()):
                 capture_tabs_and_stop()
             elif deadline is not None and time.monotonic() >= deadline:
                 self.grab().save(str(output / "failed.png"))
                 errors.append("Aufnahme wurde im UI-Test nicht innerhalb von 16 Sekunden bereit: " + json.dumps(recording_diagnostics(), ensure_ascii=False))
                 self.close()
             else:
-                QTimer.singleShot(200, wait_for_recording)
+                QTimer.singleShot(200, protect(wait_for_recording))
 
         def begin_first():
             nonlocal deadline
@@ -346,7 +346,7 @@ def run(output: Path):
             deadline = time.monotonic() + 16
 
         QTimer.singleShot(1000, protect(begin_first))
-        QTimer.singleShot(1200, wait_for_recording)
+        QTimer.singleShot(1200, protect(wait_for_recording))
 
     MainWindow.__init__ = init
     try:
