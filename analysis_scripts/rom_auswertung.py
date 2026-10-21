@@ -243,7 +243,8 @@ def _valid_pose(pose: RomPose) -> bool:
                                          for i in range(3) for j in range(3)))
 
 
-def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_instances=False) -> RomTrackingData:
+def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_instances=False,
+                           reject_duplicate_poses=False) -> RomTrackingData:
     frames: dict[str, dict[int, RomPose]] = {}
     frame_times: dict[str, float] = {}
     total_rows = 0
@@ -313,7 +314,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_in
             except (TypeError,ValueError):
                 invalid_rows += 1
                 continue
-            if explicit_instances and marker_id in frames[sample]:
+            if (explicit_instances or reject_duplicate_poses) and marker_id in frames[sample]:
                 ambiguous.add((sample, marker_id))
                 invalid_rows += 1
             frames.setdefault(sample, {})[marker_id] = pose
@@ -335,7 +336,7 @@ def _load_current_tracking(path: Path, marker_ids: Sequence[int], *, explicit_in
     # Acquisition order is evidence: sorting would hide backwards timestamps.
     if not complete:
         raise ValueError(
-            "No complete five-marker samples with 299, 301, 302, 311 and 314 were found."
+            "No complete valid samples for the required markers " + ", ".join(map(str, marker_ids)) + " were found."
         )
     start = complete[0][0]
     return RomTrackingData(

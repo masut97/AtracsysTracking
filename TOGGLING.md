@@ -72,6 +72,12 @@ to old 342 recordings. An explicit historical/unbound configuration remains
 possible with a visible coordinate-verification warning; old recordings and
 their sidecars are never rewritten.
 
+This setup assigns one physical marker to each geometry role. SDK tracking IDs
+are not assumed to persist between frames. If a frame contains multiple valid
+poses for the same geometry, that frame is excluded rather than resolved by CSV
+row order. Multiple physical markers with the same geometry need a separate
+instance-specific acquisition/analysis setup.
+
 ## Results
 
 Each run creates a new folder under `<recording>_toggling/`, without overwriting

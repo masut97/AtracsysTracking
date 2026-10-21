@@ -95,7 +95,10 @@ def analyze(source, settings, output=None, expected_frequency=None):
     geometry_verified = verify_coordinate_frame(source, settings)
     ids = [settings[key] for key in ('reference', 'bone', 'screw')]
     try:
-        data = tracking._load_current_tracking(source, ids, explicit_instances=True)
+        # SDK tracking IDs need not persist between frames. This setup assigns
+        # roles by its unique physical geometry, rejecting simultaneous duplicate
+        # poses without requiring a stable instance ID throughout the recording.
+        data = tracking._load_current_tracking(source, ids, reject_duplicate_poses=True)
     except ValueError as error:
         raise ValueError(f'Cannot evaluate toggling markers {ids}: {error}') from error
     values, baseline_count = motion(data, *ids, settings['screw_point_mm'], settings['baseline_seconds'])

@@ -110,3 +110,24 @@ def test_auto_dispatches_toggling_markers_without_running_other_analyses(tmp_pat
     monkeypatch.setattr(report, 'main', lambda argv: calls.append(argv) or 0)
     assert auto_auswertung.main([str(source), '--no-open']) == 0
     assert calls == [[str(source), '--no-open']]
+
+
+def test_changing_sdk_tracking_ids_do_not_invalidate_unique_geometry_per_frame(tmp_path):
+    path = tmp_path/'changing_ids.csv'
+    fields = ['frame_counter','time_since_start_s','geometry_id','tracking_id','visible','x_mm','y_mm','z_mm',
+              *[f'r{i}{j}' for i in range(3) for j in range(3)]]
+    with path.open('w', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields); writer.writeheader()
+        for frame in range(20):
+            for marker in (340,341,342):
+                writer.writerow(dict(frame_counter=frame, time_since_start_s=frame*.01, geometry_id=marker,
+                    tracking_id=frame*10+marker, visible=1, x_mm=0,y_mm=0,z_mm=0,
+                    **{f'r{i}{j}':int(i==j) for i in range(3) for j in range(3)}))
+        # Two poses for the same role in the same frame must not be silently
+        # resolved by CSV order, even when their values happen to be identical.
+        writer.writerow(dict(frame_counter=19,time_since_start_s=.19,geometry_id=342,tracking_id=999,
+            visible=1,x_mm=0,y_mm=0,z_mm=0,**{f'r{i}{j}':int(i==j) for i in range(3) for j in range(3)}))
+    data = report.tracking._load_current_tracking(path,[340,341,342],reject_duplicate_poses=True)
+    assert len(data.times_s) == 19
+    assert data.incomplete_samples == 1
+    assert data.invalid_samples == 1

@@ -400,6 +400,34 @@ def run(output: Path):
                 assert row["synchronization"] == "simulation"
         for rows in script_rows[1:]:
             assert [row["computer_monotonic_s"] for row in script_rows[0]] == [row["computer_monotonic_s"] for row in rows]
+        # Exercise the complete analysis exporter inside the frozen runtime,
+        # with changing SDK IDs but exactly one geometry pose per frame.
+        import numpy as np
+        from toggling_auswertung import analyze as analyze_toggling, load_settings as toggling_settings
+        synthetic = output/'SYNTHETIC_toggling.csv'
+        columns = ['frame_counter','time_since_start_s','geometry_id','tracking_id','visible',
+                   'x_mm','y_mm','z_mm', *[f'r{i}{j}' for i in range(3) for j in range(3)]]
+        with synthetic.open('w', newline='', encoding='utf-8') as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns); writer.writeheader()
+            for frame in range(600):
+                for marker in (340,341,342):
+                    writer.writerow(dict(frame_counter=frame, time_since_start_s=5+frame*.01,
+                        geometry_id=marker, tracking_id=frame*1000+marker, visible=1,
+                        x_mm=float(.4*np.sin(2*np.pi*frame*.02)) if marker==342 else 0., y_mm=0.,z_mm=0.,
+                        **{f'r{i}{j}':int(i==j) for i in range(3) for j in range(3)}))
+        fixture_setup = dict(reference=340,bone=341,screw=342,baseline_seconds=0.,
+                             screw_point_mm=[0,0,50],point_name='Synthetic point',marker_attachment='rigid_screw_shaft')
+        fixture_context = json.loads(json.dumps(tracker_metadata['coordinate_context']))
+        if 'geometry342.json5' in fixture_context['geometry_sha256']:
+            fixture_setup['screw_geometry_sha256'] = fixture_context['geometry_sha256']['geometry342.json5']
+        fixture_context['toggling_setup'] = fixture_setup
+        synthetic.with_suffix('.json').write_text(json.dumps({'adapter_mode':'synthetic fixture',
+            'coordinate_context':fixture_context}),encoding='utf-8')
+        figure = analyze_toggling(synthetic,toggling_settings(recorded=fixture_setup), output/'toggling_report',2.)
+        analysis_record = json.loads((figure.parent/'report.json').read_text(encoding='utf-8'))
+        assert analysis_record['complete_samples'] == 600
+        assert any(row['accepted'] for row in analysis_record['cycles']['rows'])
+        assert 'Synthetic point relative to bone' in figure.read_text(encoding='utf-8')
         software_sources = [spec for spec in windows[0].script_panel.specs
                             if spec.sync_mode == "best_effort_host_time_v1"]
         assert software_sources, "Kein Software-Sync-Messskript installiert"
@@ -412,6 +440,7 @@ def run(output: Path):
                   "curated_analysis_selection_and_profile_toggle": True,
                   "toggling_synthetic_point_motion_and_cycles": True,
                   "recorded_coordinate_context": True,
+                  "toggling_frozen_report_generation": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

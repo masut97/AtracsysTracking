@@ -59,6 +59,15 @@ def install():
 
     def start_session(self, *args, **kwargs):
         group = getattr(self, "_script_group", None)
+        context = None
+        root = getattr(self, '_coordinate_project_root', None)
+        if root is not None:
+            # Read local files BEFORE establishing either recording clock.
+            # The fixed RecordingWorker contract puts metadata third, or in a keyword.
+            from .coordinate_context import snapshot
+            metadata = kwargs.get('metadata', args[2] if len(args) > 2 else {})
+            names = metadata.get('geometry_files', ()) if isinstance(metadata, dict) else ()
+            context = snapshot(root, names)
         try:
             # Hold the existing re-entrant lock until auxiliary writers are initialized.
             # The acquisition and write hooks acquire it before consuming a frame.
@@ -72,16 +81,14 @@ def install():
                 self._overflow_interval_open = False
                 self._sync_ticks = {}
                 result = start_original(self, *args, **kwargs)
-                root = getattr(self, '_coordinate_project_root', None)
-                if root is not None:
-                    from .coordinate_context import snapshot
-                    self._metadata['coordinate_context'] = snapshot(root, self._metadata.get('geometry_files', ()))
                 if group is not None:
                     self._script_started_counter = time.perf_counter()
                     group.begin_recording(self._csv_path, self._session_id, self._script_started_counter)
                     self._metadata["measurement_scripts"] = {
                         "manifest": str(group.metadata_path), "hardware_synchronized": False,
                         "mode": group.synchronization, "clock": "Windows QueryPerformanceCounter"}
+                if context is not None:
+                    self._metadata['coordinate_context'] = context
                 return result
         except Exception:
             if self.stats().state != "Gestoppt":

@@ -15,7 +15,7 @@ def motion(data, reference, bone, screw, point_mm, baseline_seconds=1.):
     t = np.asarray(data.times_s, dtype=float)
     point = np.asarray(point_mm, dtype=float)
     if point.shape != (3,) or not np.isfinite(point).all():
-        raise ValueError('A finite XYZ screw-head point in recorded marker coordinates is required.')
+        raise ValueError('A finite XYZ screw point in recorded marker coordinates is required.')
     if not np.isfinite(baseline_seconds) or baseline_seconds < 0:
         raise ValueError('Baseline duration must be finite and nonnegative.')
     if len(t) < 8 or not np.isfinite(t).all() or np.any(np.diff(t) <= 0):
