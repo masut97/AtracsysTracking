@@ -31,9 +31,14 @@ der kopierbare und änderbare Registry-Pfad sowie Updates stehen unter
 
 ## Auswahl der Auswertung
 
-Die normale Liste bietet **Automatisch erkennen**, **ROM**, **Trochanter** und
+Für das Toggling-Setup mit 340/341/342 gibt es eine eigene punktbezogene
+Auswertung mit Knochenkompensation, Zeitkurven und Zykluswerten:
+[Toggling – Einrichtung und Methoden](TOGGLING.md). Das Schraubenkopfzentrum muss
+vor der ersten Auswertung im lokalen Marker-Koordinatensystem definiert werden.
+
+Die normale Liste bietet **Automatisch erkennen**, **ROM**, **Trochanter**, **Toggling** und
 **Freie Marker-Auswertung**.
-Die Automatik unterscheidet ROM, Trochanter und den Drei-Marker-Monotest anhand
+Die Automatik unterscheidet ROM, Trochanter, Toggling und den Drei-Marker-Monotest anhand
 der Marker. Mit **Weitere Profile und eigene Skripte anzeigen** werden die
 direkte Monotest-Auswertung, die drei speziellen Markerprüfungen und zusätzliche
 lokale Skripte eingeblendet. Eine bereits aktive Spezialauswertung bleibt auch

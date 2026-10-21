@@ -80,8 +80,24 @@ def run(output: Path):
         combo = self.analysis_combo
         selected_analysis = combo.currentData()
         base_choices = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
-        assert {'auto_auswertung.py', 'rom_auswertung.py', 'trochanter_auswertung.py', 'free_auswertung.py'} <= base_choices
+        assert {'auto_auswertung.py', 'rom_auswertung.py', 'trochanter_auswertung.py', 'toggling_auswertung.py', 'free_auswertung.py'} <= base_choices
         assert len(base_choices) <= 5, base_choices
+        # Exercise newly selectable analysis with synthetic poses only. In
+        # particular this verifies SciPy modules in the frozen offline runtime.
+        import sys
+        from types import SimpleNamespace
+        import numpy as np
+        sys.path.insert(0, str(root / 'analysis_scripts'))
+        from _lib.toggling import motion as toggling_motion, cycles as toggling_cycles
+        synthetic_t = np.arange(600)*.01
+        synthetic_signal = .4*np.sin(2*np.pi*synthetic_t*2)
+        synthetic_poses = {marker: tuple(SimpleNamespace(
+            translation_mm=(float(v) if marker == 342 else 0., 0., 0.),
+            rotation=np.eye(3)) for v in synthetic_signal) for marker in (340,341,342)}
+        synthetic_curves, _ = toggling_motion(
+            SimpleNamespace(times_s=synthetic_t, poses=synthetic_poses), 340,341,342,[0,0,50],0)
+        np.testing.assert_allclose(synthetic_curves['compensated_screw_head'][:,0], synthetic_signal, atol=1e-10)
+        assert any(row['accepted'] for row in toggling_cycles(synthetic_t, synthetic_curves, 2)['rows'])
         profiles.setChecked(True)
         expanded = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
         assert {'Auswertung_299_331_332.py', 'Auswertung_299_331_333.py', 'Auswertung_340_341_342.py'} <= expanded
@@ -381,6 +397,7 @@ def run(output: Path):
                   "recording_cycles": len(completed_cycles), "json_final_immediately_after_stop": True,
                   "marker_footer_visible_in_all_tabs": True,
                   "curated_analysis_selection_and_profile_toggle": True,
+                  "toggling_synthetic_point_motion_and_cycles": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

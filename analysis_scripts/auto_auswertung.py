@@ -16,6 +16,7 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 MONOTEST_MARKERS = {299, 301, 302}
 ROM_MARKERS = {299, 301, 302, 311, 314}
 TROCHANTER_MARKERS = {299, 321, 322}
+TOGGLING_MARKERS = {340, 341, 342}
 
 
 def available_marker_ids(path: Path) -> set[int]:
@@ -72,7 +73,7 @@ def _extract_dispatch_option(argv: Sequence[str]) -> tuple[str, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--auswertung",
-        choices=("auto", "mono", "rom", "trochanter"),
+        choices=("auto", "mono", "rom", "trochanter", "toggling"),
         default="auto",
     )
     options, remaining = parser.parse_known_args(list(argv))
@@ -88,6 +89,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     input_path = Path(positional[0]).resolve()
 
     marker_ids = available_marker_ids(input_path)
+    if selection == "toggling" or (selection == "auto" and TOGGLING_MARKERS.issubset(marker_ids)):
+        import toggling_auswertung
+        print("Automatic selection: toggling (reference 340, bone 341, screw 342).")
+        return toggling_auswertung.main(remaining)
     if selection == "rom" or (selection == "auto" and ROM_MARKERS.issubset(marker_ids)):
         import rom_auswertung
 
