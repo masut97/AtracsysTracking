@@ -98,6 +98,12 @@ def run(output: Path):
             SimpleNamespace(times_s=synthetic_t, poses=synthetic_poses), 340,341,342,[0,0,50],0)
         np.testing.assert_allclose(synthetic_curves['compensated_screw_point'][:,0], synthetic_signal, atol=1e-10)
         assert any(row['accepted'] for row in toggling_cycles(synthetic_t, synthetic_curves, 2)['rows'])
+        short_gap_mask = np.arange(len(synthetic_t)) % 25 != 12
+        short_gap_cycles = toggling_cycles(synthetic_t[short_gap_mask],
+            {key: values[short_gap_mask] for key, values in synthetic_curves.items()}, 2)
+        short_gap_good = [row for row in short_gap_cycles['rows'] if row['accepted']]
+        assert len(short_gap_good) >= 4
+        assert abs(np.median([row['raw']['compensated_screw_point'][0] for row in short_gap_good])-.8) < .02
         profiles.setChecked(True)
         expanded = {Path(combo.itemData(i)).name for i in range(1, combo.count())}
         assert {'Auswertung_299_331_332.py', 'Auswertung_299_331_333.py', 'Auswertung_340_341_342.py'} <= expanded
@@ -466,6 +472,7 @@ def run(output: Path):
                   "toggling_frozen_report_generation": True,
                   "toggling_frozen_standalone_entrypoint": True,
                   "toggling_peak_envelope_exports": True,
+                  "toggling_short_sampling_gaps": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

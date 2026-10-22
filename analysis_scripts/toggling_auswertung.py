@@ -179,7 +179,10 @@ def analyze(source, settings, output=None, expected_frequency=None):
     print(f'Toggling analysis: indexing observation gaps ({time.perf_counter()-started:.1f} s)...', flush=True)
     gaps = observation_gaps(t, data.received_times_s, data.unseen_marker_events, offset)
     if gaps:
-        issues.append(f'{len(gaps)} observation gaps. Filtering and cycle detection are separated at gaps. Missing cycle counts are unknown, not reconstructed.')
+        issues.append(f'{len(gaps)} irregular observation intervals are retained in the analysis record. '
+                      f'{cyclic.get("tolerated_short_intervals", 0)} bounded short intervals are tolerated for internal filtering; '
+                      f'{cyclic.get("long_observation_gaps", len(gaps))} longer interruptions split cycle analysis. '
+                      'Raw observations are unchanged; missing machine cycle counts are unknown, not reconstructed.')
     if data.unseen_marker_events:
         issues.append('Required markers were explicitly not recognized in received frames. Check placement, occlusion, reflector condition and marker fixation; this differs from absent camera frames.')
     output = (Path(output) if output else source.parent/(source.stem+'_toggling'))/('run_'+uuid.uuid4().hex[:12])
@@ -219,7 +222,7 @@ def analyze(source, settings, output=None, expected_frequency=None):
         peak_sections.append('<p>Red: cycle minima. Blue: cycle maxima. Lines connect only the extrema of '
                              'consecutive accepted cycles; they are envelopes, not a regression fit. '
                              'The main figure uses the documented low-pass filter; raw extrema are available in the expandable panel. '
-                             'Connections stop at observation gaps or excluded cycles. No gap bands are drawn.</p>')
+                             'Connections stop at longer observation interruptions or excluded cycles. No gap bands are drawn.</p>')
     else:
         peak_sections.append('<p>No reliable complete cycles detected; peak envelopes are unavailable. '
                              'No minima or maxima have been fabricated.</p>')
@@ -236,9 +239,11 @@ def analyze(source, settings, output=None, expected_frequency=None):
     with (output/'cycles.csv').open('w', encoding='utf-8-sig', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['candidate', 'segment', 'start_s', 'end_s', 'accepted', 'exclusion_reason',
+                         'observation_coverage', 'peak_support_distance_s',
                          *[f'{key}_{method}_{name}' for key in values for method in ('raw', 'filtered') for name in COLUMNS]])
         for r in cyclic['rows']:
             writer.writerow([r['cycle'], r['segment'], r['start_s'], r['end_s'], r['accepted'], r['reason'],
+                             r.get('observation_coverage', ''), r.get('maximum_peak_support_distance_s', ''),
                              *[value for key in values for method in ('raw', 'filtered')
                                for value in (r[method][key] if r['accepted'] else ['']*6)]])
     report = dict(analysis='toggling_screw_point', input=str(source), settings=settings,
@@ -255,13 +260,25 @@ def analyze(source, settings, output=None, expected_frequency=None):
     (output/'settings_snapshot.local.json').write_text(json.dumps(settings, indent=2), encoding='utf-8')
     problem_html = ''.join('<li>'+html.escape(issue)+'</li>' for issue in issues) or '<li>No input integrity issue identified by these checks.</li>'
     status = 'Check data and loading' if issues else 'Kinematic results available'
+    policy_html = ''
+    if 'maximum_observation_interval_s' in cyclic:
+        policy_html = ('<details><summary>Cycle acceptance and short-interval policy</summary><p>'
+                       f'Maximum interval within a segment: {1000*cyclic["maximum_observation_interval_s"]:.2f} ms '
+                       '(the larger of 1.75 nominal sampling intervals and the smaller of 50 ms or 5% of a period). '
+                       f'At least {100*cyclic["minimum_observation_coverage"]:.0f}% nominal observation coverage per cycle is required. '
+                       f'Every exported filtered extremum must have an observed sample within '
+                       f'{1000*cyclic["maximum_peak_support_distance_s"]:.2f} ms '
+                       '(the larger of 1.1 nominal intervals and 2% of a period). '
+                       'At least 20 nominal samples per period are required; one period at each segment edge is excluded. '
+                       'These are algorithmic acceptance criteria, not a specimen or fixation approval.</p></details>')
     doc = ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Toggling analysis</title>'
            f'<style>{CSS}svg{{width:100%;height:auto}}summary{{cursor:pointer;padding:12px}}</style><main>'
            f'<h1>Toggling analysis</h1><p>{html.escape(source.name)}</p><section class="card"><h2>{status}</h2>'
            f'<p>{len(t)} complete samples; {len(accepted)} accepted optical cycle candidates.</p>'
            '<p><a href="#peak-envelopes">Min/max peak envelopes</a> · '
            '<a href="compensated_screw_point_peak_envelopes.csv">Peak values and times (CSV)</a></p>'
-           '<h3>Observed problems and corrective actions</h3><ul>'+problem_html+'</ul>'
+           '<h3>Observed problems and corrective actions</h3><ul>'+problem_html+'</ul>'+
+           policy_html+
            '<p>These are kinematic measurements, not a loosening/failure approval. Force, stiffness and hysteresis require an independently aligned force signal.</p>'
            f'<p>{html.escape(settings["point_name"])} in marker coordinates (mm): {html.escape(str(settings["screw_point_mm"]))}.</p>'
            f'<p>Screw length: {html.escape(str(settings.get("screw_length_mm")))} mm; '
@@ -271,7 +288,9 @@ def analyze(source, settings, output=None, expected_frequency=None):
            ''.join(pages)+'<section class="card"><h2>Methods and limitations</h2>'
            '<p>Raw motion is unfiltered. Cycle CSVs contain both raw extrema and fourth-order forward/backward Butterworth low-pass extrema. '
            'The cutoff is three times the measured cycle frequency, capped at 40% of the sample rate. '
-           'Only continuous observation segments are resampled internally for filtering; no gap is bridged. '
+           'Only bounded short sampling interruptions are linearly resampled internally for filtering. '
+           'Longer interruptions split the analysis; no long gap is bridged or extrapolated. '
+           'Observation coverage and measured support near every filtered extremum are checked per cycle. '
            'One period near each segment edge is excluded. Raw extrema use the original observations. '
            'Cycle timing is inferred from optical motion; machine cycle numbers and missing cycles are unknown. '
            'A weak or absent periodic relative signal does not establish screw stability or failure.</p>'

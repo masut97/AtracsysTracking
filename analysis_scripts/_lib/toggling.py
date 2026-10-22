@@ -80,7 +80,7 @@ def motion(data, reference, bone, screw, point_mm, baseline_seconds=1.):
 
 
 def cycles(t, curves, expected_frequency=None):
-    """Segment before filtering; no smoothing or interpolation across missing data.
+    """Tolerate bounded short sampling interruptions, segment longer gaps.
 
     Cycle boundaries are optical timing estimates, not machine cycle counters.
     Store both raw sampled extrema and explicitly labelled low-pass extrema.
@@ -88,10 +88,13 @@ def cycles(t, curves, expected_frequency=None):
     t = np.asarray(t, dtype=float)
     if expected_frequency is not None and (not np.isfinite(expected_frequency) or expected_frequency <= 0):
         raise ValueError('Expected frequency must be finite and positive.')
-    if len(t) < 32 or np.any(np.diff(t) <= 0):
+    if len(t) < 32 or not np.isfinite(t).all() or np.any(np.diff(t) <= 0):
         return {'reason': 'Insufficient samples for cycle detection.', 'rows': []}
     fs = 1. / np.median(np.diff(t))
-    breaks = np.flatnonzero(np.diff(t) > 1.75/fs) + 1
+    # Bootstrap frequency estimation across only short interruptions. The final
+    # segmentation is tightened to the measured period before any cycle export.
+    bootstrap_limit = max(1.75/fs, .05)
+    breaks = np.flatnonzero(np.diff(t) > bootstrap_limit) + 1
     segments = np.split(np.arange(len(t)), breaks)
     longest = max(segments, key=len)
     if len(longest) < 32:
@@ -116,6 +119,13 @@ def cycles(t, curves, expected_frequency=None):
     if best is None or best[0] < .25:
         return {'reason': 'No reliable periodic screw/bone signal. Check loading and tracking; no cycles fabricated.', 'rows': []}
     score, channel, frequency = best
+    if fs/frequency < 20:
+        return {'reason': 'Insufficient temporal resolution: at least 20 nominal samples per cycle are required.', 'rows': []}
+    gap_limit = max(1.75/fs, min(.05, .05/frequency))
+    peak_support_limit = max(1.1/fs, .02/frequency)
+    minimum_coverage = .90
+    breaks = np.flatnonzero(np.diff(t) > gap_limit)+1
+    segments = np.split(np.arange(len(t)), breaks)
     cutoff = min(3*frequency, .4*fs)
     lowpass = butter(4, cutoff, fs=fs, output='sos')
     timing_filter = butter(3, [.7*frequency, 1.3*frequency], btype='bandpass', fs=fs, output='sos')
@@ -139,15 +149,22 @@ def cycles(t, curves, expected_frequency=None):
         for a, b in zip(peaks[:-1], peaks[1:]):
             number += 1
             start, end = grid[a], grid[b]
-            accepted = (.7/frequency <= end-start <= 1.3/frequency and
-                        start >= times[0]+1/frequency and end <= times[-1]-1/frequency and b-a >= 8)
-            raw_indices = indices[(times >= start) & (times < end)]
-            accepted = accepted and len(raw_indices) >= 8
+            left, right = np.searchsorted(times, (start, end), side='left')
+            raw_indices = indices[left:right]
+            coverage = min(1., len(raw_indices)/(fs*(end-start)))
+            reasons = []
+            if not .7/frequency <= end-start <= 1.3/frequency:
+                reasons.append('Cycle timing exclusion')
+            if not (start >= times[0]+1/frequency and end <= times[-1]-1/frequency):
+                reasons.append('Segment edge exclusion')
+            if b-a < 8 or len(raw_indices) < 8:
+                reasons.append('Insufficient observations')
+            if coverage < minimum_coverage:
+                reasons.append('Observation coverage exclusion')
+            accepted = not reasons
             row = dict(cycle=number, segment=segment_index+1, start_s=float(start), end_s=float(end),
-                       accepted=bool(accepted), reason='' if accepted else 'Timing/edge/sample exclusion')
+                       accepted=bool(accepted), reason='; '.join(reasons), observation_coverage=float(coverage))
             if accepted:
-                row['raw'] = {key: np.ptp(v[raw_indices], axis=0).tolist() for key, v in curves.items()}
-                row['filtered'] = {key: np.ptp(v[a:b], axis=0).tolist() for key, v in filtered.items()}
                 row['extrema'] = {}
                 for method, samples, sample_times in (
                         ('raw', curves['compensated_screw_point'][raw_indices], t[raw_indices]),
@@ -158,10 +175,27 @@ def cycles(t, curves, expected_frequency=None):
                         extrema[name] = samples[selected, np.arange(6)].tolist()
                         extrema[name+'_time_s'] = sample_times[selected].tolist()
                     row['extrema'][method] = extrema
-            else:
+                peak_times = np.array([row['extrema']['filtered'][name+'_time_s'] for name in ('min', 'max')])
+                raw_times = t[raw_indices]
+                positions = np.searchsorted(raw_times, peak_times)
+                before = raw_times[np.clip(positions-1, 0, len(raw_times)-1)]
+                after = raw_times[np.clip(positions, 0, len(raw_times)-1)]
+                distance = np.minimum(abs(before-peak_times), abs(after-peak_times))
+                row['maximum_peak_support_distance_s'] = float(np.max(distance))
+                if np.max(distance) > peak_support_limit:
+                    row.update(accepted=False, reason='Peak observation support exclusion')
+                    row.pop('extrema')
+                else:
+                    row['raw'] = {key: np.ptp(v[raw_indices], axis=0).tolist() for key, v in curves.items()}
+                    row['filtered'] = {key: np.ptp(v[a:b], axis=0).tolist() for key, v in filtered.items()}
+            if not row['accepted']:
                 rejected += 1
             rows.append(row)
     return dict(frequency_hz=frequency, sampling_frequency_hz=float(fs), timing_channel=int(channel),
                 spectral_concentration=score, lowpass_cutoff_hz=cutoff, filter_order=4,
                 zero_phase=True, segments=len(segments), rejected_cycles=rejected, rows=rows,
+                maximum_observation_interval_s=float(gap_limit), minimum_observation_coverage=minimum_coverage,
+                maximum_peak_support_distance_s=float(peak_support_limit),
+                tolerated_short_intervals=int(np.sum((np.diff(t) > 1.75/fs) & (np.diff(t) <= gap_limit))),
+                long_observation_gaps=len(breaks),
                 reason='' if any(r['accepted'] for r in rows) else 'No complete reliable cycles; inspect loading and tracking.')
