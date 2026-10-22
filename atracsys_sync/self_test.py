@@ -428,6 +428,23 @@ def run(output: Path):
         assert analysis_record['complete_samples'] == 600
         assert any(row['accepted'] for row in analysis_record['cycles']['rows'])
         assert 'Synthetic point relative to bone' in figure.read_text(encoding='utf-8')
+        # Run the real frozen analysis launcher in a fresh process. The imports
+        # above must not hide missing sibling-module paths in a selected script.
+        import subprocess
+        import sys
+        entry = output/'synthetic_toggling_entry.py'
+        entry.write_text('import runpy, webbrowser\n'
+                         'webbrowser.open = lambda *args, **kwargs: False\n'
+                         f'runpy.run_path({str(root / "analysis_scripts/toggling_auswertung.py")!r}, run_name="__main__")\n',
+                         encoding='utf-8')
+        child = subprocess.run([sys.executable, '--run-analysis', str(entry), '--analysis-input', str(synthetic)],
+                               cwd=output, capture_output=True, timeout=45,
+                               creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        assert child.returncode == 0, (child.stdout+child.stderr).decode('utf-8', errors='replace')
+        child_result = json.loads(child.stdout.decode('utf-8').strip().splitlines()[-1])
+        child_figure = Path(child_result['figure_html'])
+        assert child_figure.is_file()
+        assert json.loads((child_figure.parent/'report.json').read_text())['complete_samples'] == 600
         software_sources = [spec for spec in windows[0].script_panel.specs
                             if spec.sync_mode == "best_effort_host_time_v1"]
         assert software_sources, "Kein Software-Sync-Messskript installiert"
@@ -441,6 +458,7 @@ def run(output: Path):
                   "toggling_synthetic_point_motion_and_cycles": True,
                   "recorded_coordinate_context": True,
                   "toggling_frozen_report_generation": True,
+                  "toggling_frozen_standalone_entrypoint": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

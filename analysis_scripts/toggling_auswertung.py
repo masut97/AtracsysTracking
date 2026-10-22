@@ -4,10 +4,15 @@ import csv
 import html
 import json
 from pathlib import Path
+import sys
 import uuid
 import webbrowser
 
 import numpy as np
+
+DIRECTORY = Path(__file__).resolve().parent
+if str(DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(DIRECTORY))
 
 import rom_auswertung as tracking
 from _lib.toggling import motion, cycles
