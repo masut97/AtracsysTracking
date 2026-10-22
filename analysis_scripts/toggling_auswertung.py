@@ -5,6 +5,7 @@ import html
 import json
 from pathlib import Path
 import sys
+import time
 import uuid
 import webbrowser
 
@@ -15,7 +16,7 @@ if str(DIRECTORY) not in sys.path:
     sys.path.insert(0, str(DIRECTORY))
 
 import rom_auswertung as tracking
-from _lib.toggling import motion, cycles
+from _lib.toggling import motion, cycles, observation_gaps
 from _lib.rom_presentation import CSS, SVG_STYLE
 
 LABELS = {'screw_point': 'Defined screw point relative to reference',
@@ -130,6 +131,8 @@ def peak_figure_svg(title, cyclic, method='filtered'):
 
 def analyze(source, settings, output=None, expected_frequency=None):
     source = Path(source).resolve()
+    started = time.perf_counter()
+    print('Toggling analysis: reading recorded marker poses...', flush=True)
     geometry_verified = verify_coordinate_frame(source, settings)
     ids = [settings[key] for key in ('reference', 'bone', 'screw')]
     try:
@@ -139,6 +142,8 @@ def analyze(source, settings, output=None, expected_frequency=None):
         data = tracking._load_current_tracking(source, ids, reject_duplicate_poses=True)
     except ValueError as error:
         raise ValueError(f'Cannot evaluate toggling markers {ids}: {error}') from error
+    print(f'Toggling analysis: {len(data.times_s)} complete samples loaded '
+          f'({time.perf_counter()-started:.1f} s); computing motion and cycles...', flush=True)
     values, baseline_count = motion(data, *ids, settings['screw_point_mm'], settings['baseline_seconds'])
     t = np.asarray(data.times_s)
     # Keep the original elapsed recording time when present, as the other analyses do.
@@ -171,20 +176,15 @@ def analyze(source, settings, output=None, expected_frequency=None):
         issues.append(cyclic['reason'])
     if any(np.max(np.linalg.norm(v[:, 3:], axis=1)) >= 175 for v in values.values()):
         raise ValueError('Rotation approaches the 180-degree branch; component curves/cycle ranges are not reliable.')
-    intervals = np.diff(t)
-    gaps = []
-    for i in np.flatnonzero(intervals > 1.75*np.median(intervals)):
-        received = [r+offset for r in data.received_times_s if t[i] < r+offset < t[i+1]]
-        unseen = {r+offset for r, _ in data.unseen_marker_events}
-        label = ('No recorded camera frame' if not received else 'Marker not recognized'
-                 if all(r in unseen for r in received) else 'Gap origin unknown')
-        gaps.append((float(t[i]), float(t[i+1]), label))
+    print(f'Toggling analysis: indexing observation gaps ({time.perf_counter()-started:.1f} s)...', flush=True)
+    gaps = observation_gaps(t, data.received_times_s, data.unseen_marker_events, offset)
     if gaps:
         issues.append(f'{len(gaps)} observation gaps. Filtering and cycle detection are separated at gaps. Missing cycle counts are unknown, not reconstructed.')
     if data.unseen_marker_events:
         issues.append('Required markers were explicitly not recognized in received frames. Check placement, occlusion, reflector condition and marker fixation; this differs from absent camera frames.')
     output = (Path(output) if output else source.parent/(source.stem+'_toggling'))/('run_'+uuid.uuid4().hex[:12])
     output.mkdir(parents=True, exist_ok=False)
+    print(f'Toggling analysis: exporting curves and peak envelopes ({time.perf_counter()-started:.1f} s)...', flush=True)
     pages = []
     accepted = [r for r in cyclic['rows'] if r['accepted']]
     for key, v in values.items():

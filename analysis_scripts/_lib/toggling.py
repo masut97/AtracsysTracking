@@ -4,6 +4,29 @@ from scipy.signal import butter, detrend, find_peaks, sosfiltfilt, welch
 from scipy.spatial.transform import Rotation
 
 
+def observation_gaps(times, received_times, unseen_events, offset=0.):
+    """Classify open time intervals without rescanning every frame per gap."""
+    times = np.asarray(times)
+    intervals = np.diff(times)
+    if not len(intervals):
+        return []
+    indices = np.flatnonzero(intervals > 1.75*np.median(intervals))
+    if not len(indices):
+        return []
+    received = np.sort(np.asarray(received_times, dtype=float)+offset)
+    unseen = {r+offset for r, _ in unseen_events}
+    hidden = np.fromiter((r in unseen for r in received), dtype=np.int64, count=len(received))
+    hidden_prefix = np.concatenate(([0], np.cumsum(hidden)))
+    # Bounds deliberately exclude both endpoints, matching the original strict
+    # comparisons. Sorting is only an index for classification, not a data repair.
+    starts = np.searchsorted(received, times[indices], side='right')
+    ends = np.searchsorted(received, times[indices+1], side='left')
+    return [(float(times[i]), float(times[i+1]),
+             'No recorded camera frame' if end == start else 'Marker not recognized'
+             if hidden_prefix[end]-hidden_prefix[start] == end-start else 'Gap origin unknown')
+            for i, start, end in zip(indices, starts, ends)]
+
+
 def motion(data, reference, bone, screw, point_mm, baseline_seconds=1.):
     """Return screw point, bone origin and bone-compensated screw point curves.
 
