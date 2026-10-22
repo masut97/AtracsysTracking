@@ -158,7 +158,7 @@ def analyze(source, settings, output=None, expected_frequency=None):
         label = LABELS[key].replace('Defined screw point', settings['point_name'])
         with (output/(key+'_motion.csv')).open('w', encoding='utf-8-sig', newline='') as stream:
             writer = csv.writer(stream); writer.writerow(['time_s', *COLUMNS]); writer.writerows(zip(t, *v.T))
-        raw_svg = figure_svg(label+' — raw, unfiltered', t, v, 'Time (s)', gaps)
+        raw_svg = figure_svg(label+' — raw, unfiltered', t, v, 'Time (s)')
         (output/(key+'_motion.svg')).write_text(raw_svg, encoding='utf-8')
         sections = [f'<h2>{html.escape(label)}</h2>', raw_svg]
         if accepted:
