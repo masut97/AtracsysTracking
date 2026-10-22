@@ -95,6 +95,39 @@ def figure_svg(title, x, values, xlabel, gaps=()):
     return ''.join(pieces)+'</svg>'
 
 
+def peak_series(cyclic, channel, method='filtered'):
+    series = {name: ([], []) for name in ('min', 'max')}
+    previous = None
+    for row in cyclic['rows']:
+        if not row['accepted']:
+            continue
+        interrupted = previous is not None and (row['segment'] != previous['segment']
+                                                or row['cycle'] != previous['cycle']+1)
+        extrema = row['extrema'][method]
+        for name, (times, values) in series.items():
+            if interrupted:
+                times.append(float('nan')); values.append(float('nan'))
+            times.append(extrema[name+'_time_s'][channel]); values.append(extrema[name][channel])
+        previous = row
+    return series
+
+
+def peak_figure_svg(title, cyclic, method='filtered'):
+    pieces = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1260"><style>{SVG_STYLE}</style>',
+              '<rect width="1200" height="1260" fill="white"/>',
+              f'<text x="55" y="35" font-family="Arial" font-size="20">{html.escape(title)}</text>']
+    for index in range(6):
+        column, row = index//3, index%3
+        extrema = peak_series(cyclic, index, method)
+        pieces.append(tracking._svg_multi_plot(
+            [(label, *extrema[name], color) for name, label, color in
+             [('min', 'Minimum', '#d62728'), ('max', 'Maximum', '#2266ad')]],
+            (90+column*590, 120+row*400, 440, 270), 'Time (s)',
+            f'{"XYZ"[row]} ({"mm" if column == 0 else "deg"})',
+            'Translation' if column == 0 else 'Rotation-vector component'))
+    return ''.join(pieces)+'</svg>'
+
+
 def analyze(source, settings, output=None, expected_frequency=None):
     source = Path(source).resolve()
     geometry_verified = verify_coordinate_frame(source, settings)
@@ -175,6 +208,31 @@ def analyze(source, settings, output=None, expected_frequency=None):
                 (output/(key+'_'+name+'_cycles.svg')).write_text(svg, encoding='utf-8')
                 sections.append(f'<details><summary>{name.title()} peak-to-peak by cycle</summary>{svg}</details>')
         pages.append('<section class="card">'+''.join(sections)+'</section>')
+    peak_title = LABELS['compensated_screw_point'].replace('Defined screw point', settings['point_name'])
+    peak_sections = [f'<h2>{html.escape(peak_title)} — minima and maxima</h2>']
+    if accepted:
+        for method in ('filtered', 'raw'):
+            svg = peak_figure_svg(peak_title+' — '+method+' peak envelopes', cyclic, method)
+            (output/('compensated_screw_point_'+method+'_peak_envelopes.svg')).write_text(svg, encoding='utf-8')
+            peak_sections.append(svg if method == 'filtered' else
+                                 '<details><summary>Unfiltered peak envelopes</summary>'+svg+'</details>')
+        peak_sections.append('<p>Red: cycle minima. Blue: cycle maxima. Lines connect only the extrema of '
+                             'consecutive accepted cycles; they are envelopes, not a regression fit. '
+                             'The main figure uses the documented low-pass filter; raw extrema are available in the expandable panel. '
+                             'Connections stop at observation gaps or excluded cycles. No gap bands are drawn.</p>')
+    else:
+        peak_sections.append('<p>No reliable complete cycles detected; peak envelopes are unavailable. '
+                             'No minima or maxima have been fabricated.</p>')
+    pages.insert(0, '<section class="card" id="peak-envelopes">'+''.join(peak_sections)+'</section>')
+    with (output/'compensated_screw_point_peak_envelopes.csv').open('w', encoding='utf-8-sig', newline='') as stream:
+        writer = csv.writer(stream)
+        writer.writerow(['cycle', 'segment', 'method', 'channel', 'minimum_time_s', 'minimum', 'maximum_time_s', 'maximum'])
+        for row in accepted:
+            for method, extrema in row['extrema'].items():
+                for index, channel in enumerate(COLUMNS):
+                    writer.writerow([row['cycle'], row['segment'], method, channel,
+                                     extrema['min_time_s'][index], extrema['min'][index],
+                                     extrema['max_time_s'][index], extrema['max'][index]])
     with (output/'cycles.csv').open('w', encoding='utf-8-sig', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['candidate', 'segment', 'start_s', 'end_s', 'accepted', 'exclusion_reason',
@@ -201,6 +259,8 @@ def analyze(source, settings, output=None, expected_frequency=None):
            f'<style>{CSS}svg{{width:100%;height:auto}}summary{{cursor:pointer;padding:12px}}</style><main>'
            f'<h1>Toggling analysis</h1><p>{html.escape(source.name)}</p><section class="card"><h2>{status}</h2>'
            f'<p>{len(t)} complete samples; {len(accepted)} accepted optical cycle candidates.</p>'
+           '<p><a href="#peak-envelopes">Min/max peak envelopes</a> · '
+           '<a href="compensated_screw_point_peak_envelopes.csv">Peak values and times (CSV)</a></p>'
            '<h3>Observed problems and corrective actions</h3><ul>'+problem_html+'</ul>'
            '<p>These are kinematic measurements, not a loosening/failure approval. Force, stiffness and hysteresis require an independently aligned force signal.</p>'
            f'<p>{html.escape(settings["point_name"])} in marker coordinates (mm): {html.escape(str(settings["screw_point_mm"]))}.</p>'

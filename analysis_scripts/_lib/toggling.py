@@ -125,6 +125,16 @@ def cycles(t, curves, expected_frequency=None):
             if accepted:
                 row['raw'] = {key: np.ptp(v[raw_indices], axis=0).tolist() for key, v in curves.items()}
                 row['filtered'] = {key: np.ptp(v[a:b], axis=0).tolist() for key, v in filtered.items()}
+                row['extrema'] = {}
+                for method, samples, sample_times in (
+                        ('raw', curves['compensated_screw_point'][raw_indices], t[raw_indices]),
+                        ('filtered', filtered['compensated_screw_point'][a:b], grid[a:b])):
+                    extrema = {}
+                    for name, select in (('min', np.argmin), ('max', np.argmax)):
+                        selected = select(samples, axis=0)
+                        extrema[name] = samples[selected, np.arange(6)].tolist()
+                        extrema[name+'_time_s'] = sample_times[selected].tolist()
+                    row['extrema'][method] = extrema
             else:
                 rejected += 1
             rows.append(row)

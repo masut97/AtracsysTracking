@@ -428,6 +428,12 @@ def run(output: Path):
         assert analysis_record['complete_samples'] == 600
         assert any(row['accepted'] for row in analysis_record['cycles']['rows'])
         assert 'Synthetic point relative to bone' in figure.read_text(encoding='utf-8')
+        with (figure.parent/'compensated_screw_point_peak_envelopes.csv').open(encoding='utf-8-sig') as stream:
+            exported_peaks = [row for row in csv.DictReader(stream)
+                              if row['method'] == 'raw' and row['channel'] == 'x_mm']
+        assert exported_peaks
+        assert all(.38 < float(row['maximum']) < .42 and -.42 < float(row['minimum']) < -.38
+                   for row in exported_peaks)
         # Run the real frozen analysis launcher in a fresh process. The imports
         # above must not hide missing sibling-module paths in a selected script.
         import subprocess
@@ -459,6 +465,7 @@ def run(output: Path):
                   "recorded_coordinate_context": True,
                   "toggling_frozen_report_generation": True,
                   "toggling_frozen_standalone_entrypoint": True,
+                  "toggling_peak_envelope_exports": True,
                   "free_profile_editor_save_and_activity_guards": True,
                   "zwick_start_stop_and_frozen_parameters": True,
                   "separate_start_stop_and_settings_tab": True,

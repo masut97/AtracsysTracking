@@ -66,6 +66,42 @@ def test_no_periodic_motion_does_not_create_cycles():
     assert 'No reliable periodic' in result['reason']
 
 
+def test_peak_envelopes_preserve_offsets_peak_times_and_observation_breaks():
+    t = np.arange(0., 20., .01)
+    t = t[(t < 9) | (t > 11)]
+    y = np.zeros((len(t), 6))
+    y[:, 0] = 2+.4*np.sin(2*np.pi*t*2)
+    y[:, 4] = .2-.6*np.sin(2*np.pi*t*2)
+    result = cycles(t, {'compensated_screw_point': y}, 2)
+    good = [r for r in result['rows'] if r['accepted']]
+    assert len(good) >= 20
+    for row in good:
+        extrema = row['extrema']['raw']
+        assert abs(extrema['min'][0]-1.6) < .01
+        assert abs(extrema['max'][0]-2.4) < .01
+        for name in ('min', 'max'):
+            index = np.argmin(abs(t-extrema[name+'_time_s'][0]))
+            assert abs(t[index]-extrema[name+'_time_s'][0]) < 1e-10
+            assert y[index, 0] == extrema[name][0]
+            assert row['start_s'] <= t[index] < row['end_s']
+    series = report.peak_series(result, 0, 'raw')
+    for times, values in series.values():
+        assert len(values) == len(good)+1
+        assert np.isnan(values).sum() == 1
+        assert np.isnan(times).sum() == 1
+
+
+def test_peak_envelopes_break_at_a_rejected_cycle_and_do_not_invent_peaks():
+    assert all(not values for _, values in report.peak_series({'rows': []}, 0).values())
+    t = np.arange(0., 12., .01)
+    y = np.zeros((len(t), 6)); y[:, 0] = .4*np.sin(2*np.pi*t*2)
+    result = cycles(t, {'compensated_screw_point': y}, 2)
+    good = [r for r in result['rows'] if r['accepted']]
+    good[len(good)//2]['accepted'] = False
+    for _, values in report.peak_series(result, 0).values():
+        assert np.isnan(values).sum() == 1
+
+
 def test_missing_head_coordinates_block_analysis(tmp_path):
     with pytest.raises(ValueError, match='not configured'):
         report.load_settings(tmp_path/'missing.local.json')
