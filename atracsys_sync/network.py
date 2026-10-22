@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -12,6 +13,32 @@ import time
 
 _lock = threading.Lock()
 _checked = {}
+LOGGER = logging.getLogger(__name__)
+
+
+def cached_addresses(path, networks, local):
+    """A damaged discovery cache must not disable the native acquisition path."""
+    try:
+        cached = json.loads(path.read_text(encoding='utf-8-sig'))
+        entries = cached['network']['interfaces']
+        if not isinstance(entries, list):
+            raise ValueError('interfaces must be a list')
+    except FileNotFoundError:
+        return set()
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as error:
+        LOGGER.warning('Ignoring unreadable camera discovery cache %s: %s', path, error)
+        return set()
+    addresses = set()
+    for entry in entries:
+        try:
+            address = ipaddress.ip_address(entry['address'])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if (address.version == 4 and not address.is_multicast and address not in local
+                and any(address in network and address not in
+                        (network.network_address, network.broadcast_address) for network in networks)):
+            addresses.add(str(address))
+    return addresses
 
 ADAPTER_QUERY = r'''
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
@@ -95,17 +122,15 @@ def discover_camera(sdk_root):
         with ThreadPoolExecutor(max_workers=24) as pool:
             candidates.update(address for address in pool.map(_ping, targets) if address)
         config_path = root / 'bin/camera_network.json'
-        if config_path.exists():
-            cached = json.loads(config_path.read_text(encoding='utf-8'))
-            for entry in cached.get('network', {}).get('interfaces', []):
-                address = ipaddress.ip_address(entry['address'])
-                if any(address in network for network in networks) and address not in local:
-                    candidates.add(str(address))
+        candidates.update(cached_addresses(config_path, networks, local))
         if not candidates:
             raise RuntimeError('Keine erreichbare Kameraadresse am Ethernetanschluss gefunden. Kamera/PoE und die bestehende Netzwerkverbindung prüfen.')
         interfaces = [{'address': address, 'port': 3509} for address in sorted(candidates, key=ipaddress.ip_address)]
         temporary = config_path.with_suffix('.json.tmp')
-        temporary.write_text(json.dumps({'network': {'version': 1, 'interfaces': interfaces}}, indent=2), encoding='utf-8')
+        with temporary.open('w', encoding='utf-8') as stream:
+            json.dump({'network': {'version': 1, 'interfaces': interfaces}}, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
         temporary.replace(config_path)
         (root / 'bin/camera_discovery.json').write_text(json.dumps(
             {'method': 'ethernet_arp_icmp_then_atracsys_sdk_enumeration', 'adapters': adapters,
